@@ -6,7 +6,9 @@
 @property (nonatomic, strong) NSTimer *timer;
 @end
 
-@implementation PerfMonitorView
+@implementation PerfMonitorView {
+    CGPoint _initialCenter;
+}
 
 - (instancetype)initWithFrame:(CGRect)frame {
     if (self = [super initWithFrame:frame]) {
@@ -35,12 +37,15 @@
 }
 
 - (void)handlePan:(UIPanGestureRecognizer *)gesture {
-    CGPoint translation = [gesture translationInView:self.superview];
-    CGPoint center = self.center;
-    center.x += translation.x;
-    center.y += translation.y;
-    self.center = center;
-    [gesture setTranslation:CGPointZero inView:self.superview];
+    UIView *superview = self.superview;
+    if (!superview) return;
+
+    if (gesture.state == UIGestureRecognizerStateBegan) {
+        _initialCenter = self.center;
+    } else if (gesture.state == UIGestureRecognizerStateChanged) {
+        CGPoint translation = [gesture translationInView:superview];
+        self.center = CGPointMake(_initialCenter.x + translation.x, _initialCenter.y + translation.y);
+    }
 }
 
 - (void)updateStats {
@@ -96,7 +101,6 @@ static PerfMonitorWindow *sharedMonitorWindow = nil;
 + (void)handleFourFingerTap:(UITapGestureRecognizer *)sender {
     if (sender.state == UIGestureRecognizerStateRecognized) {
         if (sharedMonitorWindow) {
-            // Przełączanie widoczności okienka
             sharedMonitorWindow.hidden = !sharedMonitorWindow.hidden;
         }
     }
@@ -120,10 +124,9 @@ __attribute__((constructor)) static void tweakEntry() {
         if (!keyWindow) keyWindow = [UIApplication sharedApplication].windows.firstObject;
 
         if (keyWindow && !sharedMonitorWindow) {
-            // Tworzenie niezależnego, globalnego okna
             sharedMonitorWindow = [[PerfMonitorWindow alloc] initWithFrame:CGRectMake(30, 90, 140, 70)];
             sharedMonitorWindow.windowLevel = UIWindowLevelAlert + 1000;
-            sharedMonitorWindow.hidden = YES; // Domyślnie ukryte po starcie!
+            sharedMonitorWindow.hidden = YES; // Ukryte domyślnie, odpala się 4 palcami
             
             if (@available(iOS 13.0, *)) {
                 for (UIWindowScene *scene in [UIApplication sharedApplication].connectedScenes) {
@@ -137,7 +140,6 @@ __attribute__((constructor)) static void tweakEntry() {
             PerfMonitorView *monitorView = [[PerfMonitorView alloc] initWithFrame:sharedMonitorWindow.bounds];
             [sharedMonitorWindow addSubview:monitorView];
             
-            // Dodanie gestu 4 palców do głównego okna aplikacji
             UITapGestureRecognizer *fourFingerTap = [[UITapGestureRecognizer alloc] initWithTarget:[PerfMonitorGestureHandler class] action:@selector(handleFourFingerTap:)];
             fourFingerTap.numberOfTouchesRequired = 4;
             [keyWindow addGestureRecognizer:fourFingerTap];
