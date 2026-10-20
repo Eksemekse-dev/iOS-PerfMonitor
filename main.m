@@ -6,9 +6,7 @@
 @property (nonatomic, strong) NSTimer *timer;
 @end
 
-@implementation PerfMonitorView {
-    CGPoint _startTouchPosition;
-}
+@implementation PerfMonitorView
 
 - (instancetype)initWithFrame:(CGRect)frame {
     if (self = [super initWithFrame:frame]) {
@@ -19,6 +17,7 @@
         self.layer.borderColor = [[UIColor whiteColor] colorWithAlphaComponent:0.3].CGColor;
         self.userInteractionEnabled = YES;
 
+        // Płynne, wielokrotne przesuwanie okienka
         UIPanGestureRecognizer *panGesture = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handlePan:)];
         [self addGestureRecognizer:panGesture];
 
@@ -37,22 +36,11 @@
 
 - (void)handlePan:(UIPanGestureRecognizer *)gesture {
     CGPoint translation = [gesture translationInView:self.superview];
-    if (gesture.state == UIGestureRecognizerStateBegan) {
-        _startTouchPosition = self.center;
-    } else if (gesture.state == UIGestureRecognizerStateChanged) {
-        self.center = CGPointMake(_startTouchPosition.x + translation.x, _startTouchPosition.y + translation.y);
-    } else if (gesture.state == UIGestureRecognizerStateEnded) {
-        CGRect screenRect = [UIScreen mainScreen].bounds;
-        CGPoint center = self.center;
-        if (center.x < 0) center.x = 70;
-        if (center.x > screenRect.size.width) center.x = screenRect.size.width - 70;
-        if (center.y < 40) center.y = 50;
-        if (center.y > screenRect.size.height) center.y = screenRect.size.height - 50;
-        
-        [UIView animateWithDuration:0.3 animations:^{
-            self.center = center;
-        }];
-    }
+    CGPoint center = self.center;
+    center.x += translation.x;
+    center.y += translation.y;
+    self.center = center;
+    [gesture setTranslation:CGPointZero inView:self.superview];
 }
 
 - (void)updateStats {
@@ -99,12 +87,25 @@
 }
 @end
 
-// Wywołanie bezpośrednio przy starcie biblioteki z lekkim opóźnieniem
+static PerfMonitorWindow *sharedMonitorWindow = nil;
+
+@interface PerfMonitorGestureHandler : NSObject
+@end
+
+@implementation PerfMonitorGestureHandler
++ (void)handleFourFingerTap:(UITapGestureRecognizer *)sender {
+    if (sender.state == UIGestureRecognizerStateRecognized) {
+        if (sharedMonitorWindow) {
+            // Przełączanie widoczności okienka
+            sharedMonitorWindow.hidden = !sharedMonitorWindow.hidden;
+        }
+    }
+}
+@end
+
 __attribute__((constructor)) static void tweakEntry() {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         UIWindow *keyWindow = nil;
-        
-        // Bezpieczne pobranie okna niezależnie od wersji iOS i kontenera
         for (UIWindowScene *scene in [UIApplication sharedApplication].connectedScenes) {
             if ([scene isKindOfClass:[UIWindowScene class]]) {
                 for (UIWindow *win in scene.windows) {
@@ -116,23 +117,30 @@ __attribute__((constructor)) static void tweakEntry() {
             }
             if (keyWindow) break;
         }
-        
-        if (!keyWindow) {
-            keyWindow = [UIApplication sharedApplication].delegate.window;
-        }
+        if (!keyWindow) keyWindow = [UIApplication sharedApplication].windows.firstObject;
 
-        if (!keyWindow) {
-            keyWindow = [[UIApplication sharedApplication].windows firstObject];
-        }
-
-        if (keyWindow) {
-            PerfMonitorWindow *monitorWindow = [[PerfMonitorWindow alloc] initWithFrame:CGRectMake(30, 90, 140, 70)];
-            monitorWindow.windowLevel = UIWindowLevelAlert + 1000;
-            monitorWindow.hidden = NO;
+        if (keyWindow && !sharedMonitorWindow) {
+            // Tworzenie niezależnego, globalnego okna
+            sharedMonitorWindow = [[PerfMonitorWindow alloc] initWithFrame:CGRectMake(30, 90, 140, 70)];
+            sharedMonitorWindow.windowLevel = UIWindowLevelAlert + 1000;
+            sharedMonitorWindow.hidden = YES; // Domyślnie ukryte po starcie!
             
-            PerfMonitorView *monitorView = [[PerfMonitorView alloc] initWithFrame:monitorWindow.bounds];
-            [monitorWindow addSubview:monitorView];
-            [keyWindow addSubview:monitorWindow];
+            if (@available(iOS 13.0, *)) {
+                for (UIWindowScene *scene in [UIApplication sharedApplication].connectedScenes) {
+                    if ([scene isKindOfClass:[UIWindowScene class]]) {
+                        sharedMonitorWindow.windowScene = scene;
+                        break;
+                    }
+                }
+            }
+            
+            PerfMonitorView *monitorView = [[PerfMonitorView alloc] initWithFrame:sharedMonitorWindow.bounds];
+            [sharedMonitorWindow addSubview:monitorView];
+            
+            // Dodanie gestu 4 palców do głównego okna aplikacji
+            UITapGestureRecognizer *fourFingerTap = [[UITapGestureRecognizer alloc] initWithTarget:[PerfMonitorGestureHandler class] action:@selector(handleFourFingerTap:)];
+            fourFingerTap.numberOfTouchesRequired = 4;
+            [keyWindow addGestureRecognizer:fourFingerTap];
         }
     });
 }
