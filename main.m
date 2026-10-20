@@ -45,12 +45,17 @@
 
 @end
 
-// Automatyczne uruchomienie okienka po załadowaniu biblioteki do aplikacji
-__attribute__((constructor)) static void initialize() {
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        UIWindow *keyWindow = [UIApplication sharedApplication].keyWindow;
-        PerfMonitorWindow *monitorWindow = [[PerfMonitorWindow alloc] initWithFrame:CGRectMake(50, 100, 130, 55)];
-        monitorWindow.hidden = NO;
-        [keyWindow addSubview:monitorWindow];
-    });
+// Inicjalizacja wywoływana przez mechanizm ładowania wtyczek
+__attribute__((constructor)) static void tweakEntry() {
+    [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidFinishLaunchingNotification
+                                                      object:nil
+                                                       queue:[NSOperationQueue mainQueue]
+                                                  usingBlock:^(NSNotification *note) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            UIWindow *keyWindow = [UIApplication sharedApplication].keyWindow;
+            PerfMonitorWindow *monitorWindow = [[PerfMonitorWindow alloc] initWithFrame:CGRectMake(50, 100, 130, 55)];
+            monitorWindow.hidden = NO;
+            [keyWindow addSubview:monitorWindow];
+        });
+    }];
 }
