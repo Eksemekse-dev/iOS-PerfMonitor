@@ -12,11 +12,11 @@
 
 - (instancetype)initWithFrame:(CGRect)frame {
     if (self = [super initWithFrame:frame]) {
-        self.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.75];
+        self.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.8];
         self.layer.cornerRadius = 14;
         self.layer.masksToBounds = YES;
         self.layer.borderWidth = 1.0;
-        self.layer.borderColor = [[UIColor whiteColor] colorWithAlphaComponent:0.2].CGColor;
+        self.layer.borderColor = [[UIColor whiteColor] colorWithAlphaComponent:0.3].CGColor;
         self.userInteractionEnabled = YES;
 
         UIPanGestureRecognizer *panGesture = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handlePan:)];
@@ -99,37 +99,40 @@
 }
 @end
 
+// Wywołanie bezpośrednio przy starcie biblioteki z lekkim opóźnieniem
 __attribute__((constructor)) static void tweakEntry() {
-    dispatch_async(dispatch_get_main_queue(), ^{
-        [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidFinishLaunchingNotification
-                                                          object:nil
-                                                           queue:[NSOperationQueue mainQueue]
-                                                      usingBlock:^(NSNotification *note) {
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-                UIWindow *targetWindow = nil;
-                for (UIWindowScene *scene in [UIApplication sharedApplication].connectedScenes) {
-                    if (scene.activationState == UISceneActivationStateForegroundActive) {
-                        for (UIWindow *win in scene.windows) {
-                            if (win.isKeyWindow) {
-                                targetWindow = win;
-                                break;
-                            }
-                        }
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        UIWindow *keyWindow = nil;
+        
+        // Bezpieczne pobranie okna niezależnie od wersji iOS i kontenera
+        for (UIWindowScene *scene in [UIApplication sharedApplication].connectedScenes) {
+            if ([scene isKindOfClass:[UIWindowScene class]]) {
+                for (UIWindow *win in scene.windows) {
+                    if (win.isKeyWindow) {
+                        keyWindow = win;
+                        break;
                     }
                 }
-                if (!targetWindow) {
-                    targetWindow = [UIApplication sharedApplication].windows.firstObject;
-                }
-                if (!targetWindow) return;
+            }
+            if (keyWindow) break;
+        }
+        
+        if (!keyWindow) {
+            keyWindow = [UIApplication sharedApplication].delegate.window;
+        }
 
-                PerfMonitorWindow *monitorWindow = [[PerfMonitorWindow alloc] initWithFrame:CGRectMake(20, 80, 130, 65)];
-                monitorWindow.windowLevel = UIWindowLevelAlert + 1000;
-                monitorWindow.hidden = NO;
-                
-                PerfMonitorView *monitorView = [[PerfMonitorView alloc] initWithFrame:monitorWindow.bounds];
-                [monitorWindow addSubview:monitorView];
-                [targetWindow addSubview:monitorWindow];
-            });
-        }];
+        if (!keyWindow) {
+            keyWindow = [[UIApplication sharedApplication].windows firstObject];
+        }
+
+        if (keyWindow) {
+            PerfMonitorWindow *monitorWindow = [[PerfMonitorWindow alloc] initWithFrame:CGRectMake(30, 90, 140, 70)];
+            monitorWindow.windowLevel = UIWindowLevelAlert + 1000;
+            monitorWindow.hidden = NO;
+            
+            PerfMonitorView *monitorView = [[PerfMonitorView alloc] initWithFrame:monitorWindow.bounds];
+            [monitorWindow addSubview:monitorView];
+            [keyWindow addSubview:monitorWindow];
+        }
     });
 }
