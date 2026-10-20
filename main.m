@@ -99,20 +99,19 @@
 @interface PerfFullScreenMenuView : UIView
 @property (nonatomic, copy) void (^onClose)(void);
 @property (nonatomic, copy) void (^onRunTest)(void);
+@property (nonatomic, copy) NSString *shareSummaryText;
 @end
 
 @implementation PerfFullScreenMenuView
 
 - (instancetype)initWithFrame:(CGRect)frame {
     if (self = [super initWithFrame:frame]) {
-        // Blur background
         UIBlurEffect *blurEffect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleDark];
         UIVisualEffectView *blurView = [[UIVisualEffectView alloc] initWithEffect:blurEffect];
         blurView.frame = self.bounds;
         blurView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
         [self addSubview:blurView];
 
-        // Main card panel
         UIView *cardView = [[UIView alloc] initWithFrame:CGRectMake(30, 40, frame.size.width - 60, frame.size.height - 80)];
         cardView.center = CGPointMake(frame.size.width / 2.0, frame.size.height / 2.0);
         cardView.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin | UIViewAutoresizingFlexibleRightMargin | UIViewAutoresizingFlexibleTopMargin | UIViewAutoresizingFlexibleBottomMargin;
@@ -122,27 +121,34 @@
         cardView.layer.borderColor = [[UIColor whiteColor] colorWithAlphaComponent:0.15].CGColor;
         [self addSubview:cardView];
 
-        // Title with SF Symbol icon
         UIImageView *titleIcon = [[UIImageView alloc] initWithImage:[UIImage systemImageNamed:@"waveform.path.ecg"]];
         titleIcon.frame = CGRectMake(20, 24, 24, 24);
         titleIcon.tintColor = [UIColor systemBlueColor];
         [cardView addSubview:titleIcon];
 
-        UILabel *titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(52, 20, cardView.frame.size.width - 100, 30)];
+        UILabel *titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(52, 20, cardView.frame.size.width - 140, 30)];
         titleLabel.text = @"Performance Dashboard";
         titleLabel.textColor = [UIColor whiteColor];
-        titleLabel.font = [UIFont systemFontOfSize:18 weight:UIFontWeightBold];
+        titleLabel.font = [UIFont systemFontOfSize:17 weight:UIFontWeightBold];
         [cardView addSubview:titleLabel];
 
-        // Close button
+        // Przycisk Share (Udostępnij)
+        UIButton *shareButton = [UIButton buttonWithType:UIButtonTypeSystem];
+        shareButton.frame = CGRectMake(cardView.frame.size.width - 80, 20, 30, 30);
+        [shareButton setImage:[UIImage systemImageNamed:@"square.and.arrow.up"] forState:UIControlStateNormal];
+        shareButton.tintColor = [UIColor systemBlueColor];
+        [shareButton addTarget:self action:@selector(shareTapped) forControlEvents:UIControlEventTouchUpInside];
+        [cardView addSubview:shareButton];
+
+        // Przycisk Zamknięcia
         UIButton *closeButton = [UIButton buttonWithType:UIButtonTypeSystem];
-        closeButton.frame = CGRectMake(cardView.frame.size.width - 45, 20, 30, 30);
+        closeButton.frame = CGRectMake(cardView.frame.size.width - 42, 20, 30, 30);
         [closeButton setImage:[UIImage systemImageNamed:@"xmark.circle.fill"] forState:UIControlStateNormal];
         closeButton.tintColor = [UIColor secondaryLabelColor];
         [closeButton addTarget:self action:@selector(closeTapped) forControlEvents:UIControlEventTouchUpInside];
         [cardView addSubview:closeButton];
 
-        // Fetch system data
+        // Pobieranie danych systemowych
         int mib[4] = { CTL_KERN, KERN_PROC, KERN_PROC_PID, getpid() };
         struct kinfo_proc info;
         size_t size = sizeof(info);
@@ -159,7 +165,18 @@
         NSString *bundleId = [[NSBundle mainBundle] bundleIdentifier] ?: @"Unknown";
         NSString *iosVersion = [[UIDevice currentDevice] systemVersion];
 
-        // Container Scroll / Stack for info rows
+        // Przygotowanie tekstu do udostępniania
+        self.shareSummaryText = [NSString stringWithFormat:
+                                 @"📊 PerfMonitor Diagnostics\n"
+                                 @"------------------------\n"
+                                 @"iOS Version: %@\n"
+                                 @"Bundle ID: %@\n"
+                                 @"Debugger Attached: %@\n"
+                                 @"Memory+ Kernel: Active\n"
+                                 @"App RAM Usage: %.1f MB\n"
+                                 @"Total Device RAM: %llu MB",
+                                 iosVersion, bundleId, debuggerAttached ? @"Yes" : @"No", appRamMB, totalDeviceRam];
+
         UIScrollView *scrollView = [[UIScrollView alloc] initWithFrame:CGRectMake(20, 70, cardView.frame.size.width - 40, cardView.frame.size.height - 145)];
         scrollView.showsVerticalScrollIndicator = NO;
         [cardView addSubview:scrollView];
@@ -175,35 +192,42 @@
 
         CGFloat yOffset = 0;
         for (NSDictionary *item in items) {
-            UIView *rowView = [[UIView alloc] initWithFrame:CGRectMake(0, yOffset, scrollView.frame.size.width, 48)];
-            rowView.backgroundColor = [[UIColor whiteColor] colorWithAlphaComponent:0.05];
-            rowView.layer.cornerRadius = 12;
+            UIButton *rowButton = [UIButton buttonWithType:UIButtonTypeCustom];
+            rowButton.frame = CGRectMake(0, yOffset, scrollView.frame.size.width, 48);
+            rowButton.backgroundColor = [[UIColor whiteColor] colorWithAlphaComponent:0.05];
+            rowButton.layer.cornerRadius = 12;
 
             UIImageView *iconView = [[UIImageView alloc] initWithImage:[UIImage systemImageNamed:item[@"icon"]]];
             iconView.frame = CGRectMake(14, 14, 20, 20);
             iconView.tintColor = [UIColor systemCyanColor];
             iconView.contentMode = UIViewContentModeScaleAspectFit;
-            [rowView addSubview:iconView];
+            iconView.userInteractionEnabled = NO;
+            [rowButton addSubview:iconView];
 
-            UILabel *nameLabel = [[UILabel alloc] initWithFrame:CGRectMake(46, 4, rowView.frame.size.width - 160, 40)];
+            UILabel *nameLabel = [[UILabel alloc] initWithFrame:CGRectMake(46, 4, rowButton.frame.size.width - 160, 40)];
             nameLabel.text = item[@"title"];
             nameLabel.textColor = [UIColor lightGrayColor];
             nameLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
-            [rowView addSubview:nameLabel];
+            nameLabel.userInteractionEnabled = NO;
+            [rowButton addSubview:nameLabel];
 
-            UILabel *valLabel = [[UILabel alloc] initWithFrame:CGRectMake(rowView.frame.size.width - 110, 4, 100, 40)];
+            UILabel *valLabel = [[UILabel alloc] initWithFrame:CGRectMake(rowButton.frame.size.width - 110, 4, 100, 40)];
             valLabel.text = item[@"value"];
             valLabel.textColor = [UIColor whiteColor];
             valLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightBold];
             valLabel.textAlignment = NSTextAlignmentRight;
-            [rowView addSubview:valLabel];
+            valLabel.userInteractionEnabled = NO;
+            [rowButton addSubview:valLabel];
 
-            [scrollView addSubview:rowView];
+            // Dodanie akcji kopiowania do schowka
+            [rowButton addTarget:self action:@selector(copyRowValue:) forControlEvents:UIControlEventTouchUpInside];
+            objc_setAssociatedObject(rowButton, "copyValue", item[@"value"], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+
+            [scrollView addSubview:rowButton];
             yOffset += 56;
         }
         scrollView.contentSize = CGSizeMake(scrollView.frame.size.width, yOffset);
 
-        // Stress Test Button
         UIButton *testButton = [UIButton buttonWithType:UIButtonTypeSystem];
         testButton.frame = CGRectMake(20, cardView.frame.size.height - 60, cardView.frame.size.width - 40, 44);
         testButton.backgroundColor = [UIColor systemRedColor];
@@ -215,6 +239,51 @@
         [cardView addSubview:testButton];
     }
     return self;
+}
+
+// Obsługa kopiowania do schowka po kliknięciu kafelka
+- (void)copyRowValue:(UIButton *)sender {
+    NSString *valueToCopy = objc_getAssociatedObject(sender, "copyValue");
+    if (valueToCopy) {
+        [UIPasteboard generalPasteboard].string = valueToCopy;
+
+        // Wibracja Haptic feedback
+        UIImpactFeedbackGenerator *generator = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleLight];
+        [generator impactOccurred];
+
+        // Pokazanie dymka z informacją o skopiowaniu
+        UILabel *toast = [[UILabel alloc] initWithFrame:CGRectMake((self.frame.size.width - 160) / 2.0, self.frame.size.height - 110, 160, 36)];
+        toast.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.85];
+        toast.textColor = [UIColor whiteColor];
+        toast.font = [UIFont systemFontOfSize:12 weight:UIFontWeightBold];
+        toast.textAlignment = NSTextAlignmentCenter;
+        toast.text = @"Copied to clipboard!";
+        toast.layer.cornerRadius = 18;
+        toast.layer.masksToBounds = YES;
+        toast.alpha = 0.0;
+        [self addSubview:toast];
+
+        [UIView animateWithDuration:0.2 animations:^{
+            toast.alpha = 1.0;
+        } completion:^(BOOL finished) {
+            [UIView animateWithDuration:0.3 delay:1.2 options:0 animations:^{
+                toast.alpha = 0.0;
+            } completion:^(BOOL finished) {
+                [toast removeFromSuperview];
+            }];
+        }];
+    }
+}
+
+- (void)shareTapped {
+    if (!self.shareSummaryText) return;
+    UIActivityViewController *activityVC = [[UIActivityViewController alloc] initWithActivityItems:@[self.shareSummaryText] applicationActivities:nil];
+    
+    UIWindow *keyWindow = self.window;
+    UIViewController *rootVC = keyWindow.rootViewController;
+    if (rootVC) {
+        [rootVC presentViewController:activityVC animated:YES completion:nil];
+    }
 }
 
 - (void)runStressTestTapped {
@@ -370,12 +439,14 @@ static UIWindow *fullScreenMenuWindow = nil;
 }
 
 + (void)handleOrientationChange:(NSNotification *)notification {
+    // Kiedy otwarte jest menu ukryte, ignorujemy rotację, żeby nie psuć widoku
+    if (fullScreenMenuWindow) {
+        return;
+    }
+
     if (sharedMonitorWindow && !sharedMonitorWindow.isHidden) {
         CGSize screenSize = [UIScreen mainScreen].bounds.size;
         sharedMonitorWindow.center = CGPointMake(screenSize.width / 2.0, 90.0);
-    }
-    if (fullScreenMenuWindow) {
-        fullScreenMenuWindow.frame = [UIScreen mainScreen].bounds;
     }
 }
 
