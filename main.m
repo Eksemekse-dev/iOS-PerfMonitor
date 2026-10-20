@@ -19,7 +19,7 @@
         self.layer.borderColor = [[UIColor whiteColor] colorWithAlphaComponent:0.3].CGColor;
         self.userInteractionEnabled = YES;
 
-        // Płynne, wielokrotne przesuwanie okienka
+        // Płynne, wielokrotne przesuwanie całego okna
         UIPanGestureRecognizer *panGesture = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handlePan:)];
         [self addGestureRecognizer:panGesture];
 
@@ -37,14 +37,14 @@
 }
 
 - (void)handlePan:(UIPanGestureRecognizer *)gesture {
-    UIView *superview = self.superview;
-    if (!superview) return;
+    UIWindow *window = self.window;
+    if (!window) return;
 
     if (gesture.state == UIGestureRecognizerStateBegan) {
-        _initialCenter = self.center;
+        _initialCenter = window.center;
     } else if (gesture.state == UIGestureRecognizerStateChanged) {
-        CGPoint translation = [gesture translationInView:superview];
-        self.center = CGPointMake(_initialCenter.x + translation.x, _initialCenter.y + translation.y);
+        CGPoint translation = [gesture translationInView:window];
+        window.center = CGPointMake(_initialCenter.x + translation.x, _initialCenter.y + translation.y);
     }
 }
 
