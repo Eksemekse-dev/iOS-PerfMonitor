@@ -19,7 +19,6 @@
         self.layer.borderColor = [[UIColor whiteColor] colorWithAlphaComponent:0.3].CGColor;
         self.userInteractionEnabled = YES;
 
-        // Płynne, wielokrotne przesuwanie całego okna
         UIPanGestureRecognizer *panGesture = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handlePan:)];
         [self addGestureRecognizer:panGesture];
 
@@ -105,6 +104,14 @@ static PerfMonitorWindow *sharedMonitorWindow = nil;
         }
     }
 }
+
++ (void)handleOrientationChange:(NSNotification *)notification {
+    if (sharedMonitorWindow && !sharedMonitorWindow.isHidden) {
+        // Po zmianie rotacji ekranu centrów okienko bezpiecznie na środku nowej przestrzeni
+        CGSize screenSize = [UIScreen mainScreen].bounds.size;
+        sharedMonitorWindow.center = CGPointMake(screenSize.width / 2.0, 90.0);
+    }
+}
 @end
 
 __attribute__((constructor)) static void tweakEntry() {
@@ -124,9 +131,12 @@ __attribute__((constructor)) static void tweakEntry() {
         if (!keyWindow) keyWindow = [UIApplication sharedApplication].windows.firstObject;
 
         if (keyWindow && !sharedMonitorWindow) {
-            sharedMonitorWindow = [[PerfMonitorWindow alloc] initWithFrame:CGRectMake(30, 90, 140, 70)];
+            CGSize screenSize = [UIScreen mainScreen].bounds.size;
+            // Startowa pozycja na górze ekranu
+            sharedMonitorWindow = [[PerfMonitorWindow alloc] initWithFrame:CGRectMake(0, 0, 140, 70)];
+            sharedMonitorWindow.center = CGPointMake(screenSize.width / 2.0, 90.0);
             sharedMonitorWindow.windowLevel = UIWindowLevelAlert + 1000;
-            sharedMonitorWindow.hidden = YES; // Ukryte domyślnie, odpala się 4 palcami
+            sharedMonitorWindow.hidden = YES; // Ukryte domyślnie, włączane 4 palcami
             
             if (@available(iOS 13.0, *)) {
                 for (UIWindowScene *scene in [UIApplication sharedApplication].connectedScenes) {
@@ -140,9 +150,16 @@ __attribute__((constructor)) static void tweakEntry() {
             PerfMonitorView *monitorView = [[PerfMonitorView alloc] initWithFrame:sharedMonitorWindow.bounds];
             [sharedMonitorWindow addSubview:monitorView];
             
+            // Nasłuchiwanie gestu 4 palców
             UITapGestureRecognizer *fourFingerTap = [[UITapGestureRecognizer alloc] initWithTarget:[PerfMonitorGestureHandler class] action:@selector(handleFourFingerTap:)];
             fourFingerTap.numberOfTouchesRequired = 4;
             [keyWindow addGestureRecognizer:fourFingerTap];
+
+            // Nasłuchiwanie zmiany rotacji ekranu
+            [[NSNotificationCenter defaultCenter] addObserver:[PerfMonitorGestureHandler class]
+                                                     selector:@selector(handleOrientationChange:)
+                                                         name:UIDeviceOrientationDidChangeNotification
+                                                       object:nil];
         }
     });
 }
