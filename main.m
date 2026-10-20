@@ -3,7 +3,6 @@
 #import <sys/sysctl.h>
 #import <sys/types.h>
 #include <unistd.h>
-#include <dlfcn.h>
 
 // --- FLOATING PERFORMANCE MONITOR (PiP) ---
 @interface PerfMonitorView : UIView
@@ -96,7 +95,7 @@
 }
 @end
 
-// --- MODERN FULL-SCREEN DIAGNOSTIC MENU ---
+// --- MODERN PROFESSIONAL FULL-SCREEN MENU ---
 @interface PerfFullScreenMenuView : UIView
 @property (nonatomic, copy) void (^onClose)(void);
 @property (nonatomic, copy) void (^onRunTest)(void);
@@ -106,35 +105,49 @@
 
 - (instancetype)initWithFrame:(CGRect)frame {
     if (self = [super initWithFrame:frame]) {
+        // Blur background
         UIBlurEffect *blurEffect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleDark];
         UIVisualEffectView *blurView = [[UIVisualEffectView alloc] initWithEffect:blurEffect];
         blurView.frame = self.bounds;
         blurView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
         [self addSubview:blurView];
 
-        UIView *cardView = [[UIView alloc] initWithFrame:CGRectMake(30, 60, frame.size.width - 60, frame.size.height - 120)];
+        // Main card panel
+        UIView *cardView = [[UIView alloc] initWithFrame:CGRectMake(30, 40, frame.size.width - 60, frame.size.height - 80)];
         cardView.center = CGPointMake(frame.size.width / 2.0, frame.size.height / 2.0);
         cardView.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin | UIViewAutoresizingFlexibleRightMargin | UIViewAutoresizingFlexibleTopMargin | UIViewAutoresizingFlexibleBottomMargin;
-        cardView.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.85];
+        cardView.backgroundColor = [[UIColor colorWithRed:0.12 green:0.12 blue:0.14 alpha:1.0] colorWithAlphaComponent:0.9];
         cardView.layer.cornerRadius = 24;
         cardView.layer.borderWidth = 1.0;
-        cardView.layer.borderColor = [[UIColor whiteColor] colorWithAlphaComponent:0.2].CGColor;
+        cardView.layer.borderColor = [[UIColor whiteColor] colorWithAlphaComponent:0.15].CGColor;
         [self addSubview:cardView];
 
-        UILabel *titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, 20, cardView.frame.size.width - 40, 30)];
-        titleLabel.text = @"⚡ PerfMonitor Dashboard";
+        // Title with SF Symbol icon
+        UIImageView *titleIcon = [[UIImageView alloc] initWithImage:[UIImage systemImageNamed:@"waveform.path.ecg"]];
+        titleIcon.frame = CGRectMake(20, 24, 24, 24);
+        titleIcon.tintColor = [UIColor systemBlueColor];
+        [cardView addSubview:titleIcon];
+
+        UILabel *titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(52, 20, cardView.frame.size.width - 100, 30)];
+        titleLabel.text = @"Performance Dashboard";
         titleLabel.textColor = [UIColor whiteColor];
-        titleLabel.font = [UIFont systemFontOfSize:20 weight:UIFontWeightBold];
-        titleLabel.textAlignment = NSTextAlignmentCenter;
+        titleLabel.font = [UIFont systemFontOfSize:18 weight:UIFontWeightBold];
         [cardView addSubview:titleLabel];
 
-        // Safe debugger check using sysctl info flags alternative
+        // Close button
+        UIButton *closeButton = [UIButton buttonWithType:UIButtonTypeSystem];
+        closeButton.frame = CGRectMake(cardView.frame.size.width - 45, 20, 30, 30);
+        [closeButton setImage:[UIImage systemImageNamed:@"xmark.circle.fill"] forState:UIControlStateNormal];
+        closeButton.tintColor = [UIColor secondaryLabelColor];
+        [closeButton addTarget:self action:@selector(closeTapped) forControlEvents:UIControlEventTouchUpInside];
+        [cardView addSubview:closeButton];
+
+        // Fetch system data
         int mib[4] = { CTL_KERN, KERN_PROC, KERN_PROC_PID, getpid() };
         struct kinfo_proc info;
         size_t size = sizeof(info);
         BOOL debuggerAttached = NO;
         if (sysctl(mib, 4, &info, &size, NULL, 0) == 0) {
-            // Check process flags safely across iOS SDK variants
             debuggerAttached = ((info.kp_proc.p_flag & P_TRACED) != 0);
         }
 
@@ -146,38 +159,60 @@
         NSString *bundleId = [[NSBundle mainBundle] bundleIdentifier] ?: @"Unknown";
         NSString *iosVersion = [[UIDevice currentDevice] systemVersion];
 
-        UITextView *textView = [[UITextView alloc] initWithFrame:CGRectMake(20, 70, cardView.frame.size.width - 40, cardView.frame.size.height - 160)];
-        textView.backgroundColor = [UIColor clearColor];
-        textView.textColor = [UIColor whiteColor];
-        textView.font = [UIFont fontWithName:@"Courier" size:13] ?: [UIFont systemFontOfSize:13];
-        textView.editable = NO;
-        textView.text = [NSString stringWithFormat:
-                         @"📱 iOS Version: %@\n"
-                         @"📦 Bundle ID: %@\n"
-                         @"🔍 Debugger Attached: %@\n"
-                         @"🧠 Memory+ Kernel: Active\n"
-                         @"📊 App RAM Usage: %.1f MB\n"
-                         @"💾 Total Device RAM: %llu MB",
-                         iosVersion, bundleId, debuggerAttached ? @"YES (Connected)" : @"NO (Clean)", appRamMB, totalDeviceRam];
-        [cardView addSubview:textView];
+        // Container Scroll / Stack for info rows
+        UIScrollView *scrollView = [[UIScrollView alloc] initWithFrame:CGRectMake(20, 70, cardView.frame.size.width - 40, cardView.frame.size.height - 145)];
+        scrollView.showsVerticalScrollIndicator = NO;
+        [cardView addSubview:scrollView];
 
+        NSArray *items = @[
+            @{@"icon": @"iphone", @"title": @"iOS Version", @"value": iosVersion},
+            @{@"icon": @"app.badge", @"title": @"Bundle ID", @"value": bundleId},
+            @{@"icon": @"ladybug", @"title": @"Debugger Attached", @"value": debuggerAttached ? @"Yes (Connected)" : @"No (Clean)"},
+            @{@"icon": @"cpu", @"title": @"Memory+ Kernel", @"value": @"Active"},
+            @{@"icon": @"memorychip", @"title": @"App RAM Usage", @"value": [NSString stringWithFormat:@"%.1f MB", appRamMB]},
+            @{@"icon": @"internaldrive", @"title": @"Total Device RAM", @"value": [NSString stringWithFormat:@"%llu MB", totalDeviceRam]}
+        ];
+
+        CGFloat yOffset = 0;
+        for (NSDictionary *item in items) {
+            UIView *rowView = [[UIView alloc] initWithFrame:CGRectMake(0, yOffset, scrollView.frame.size.width, 48)];
+            rowView.backgroundColor = [[UIColor whiteColor] colorWithAlphaComponent:0.05];
+            rowView.layer.cornerRadius = 12;
+
+            UIImageView *iconView = [[UIImageView alloc] initWithImage:[UIImage systemImageNamed:item[@"icon"]]];
+            iconView.frame = CGRectMake(14, 14, 20, 20);
+            iconView.tintColor = [UIColor systemCyanColor];
+            iconView.contentMode = UIViewContentModeScaleAspectFit;
+            [rowView addSubview:iconView];
+
+            UILabel *nameLabel = [[UILabel alloc] initWithFrame:CGRectMake(46, 4, rowView.frame.size.width - 160, 40)];
+            nameLabel.text = item[@"title"];
+            nameLabel.textColor = [UIColor lightGrayColor];
+            nameLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
+            [rowView addSubview:nameLabel];
+
+            UILabel *valLabel = [[UILabel alloc] initWithFrame:CGRectMake(rowView.frame.size.width - 110, 4, 100, 40)];
+            valLabel.text = item[@"value"];
+            valLabel.textColor = [UIColor whiteColor];
+            valLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightBold];
+            valLabel.textAlignment = NSTextAlignmentRight;
+            [rowView addSubview:valLabel];
+
+            [scrollView addSubview:rowView];
+            yOffset += 56;
+        }
+        scrollView.contentSize = CGSizeMake(scrollView.frame.size.width, yOffset);
+
+        // Stress Test Button
         UIButton *testButton = [UIButton buttonWithType:UIButtonTypeSystem];
-        testButton.frame = CGRectMake(20, cardView.frame.size.height - 75, cardView.frame.size.width - 40, 44);
+        testButton.frame = CGRectMake(20, cardView.frame.size.height - 60, cardView.frame.size.width - 40, 44);
         testButton.backgroundColor = [UIColor systemRedColor];
         [testButton setTitle:@"Run RAM Stress Test (OOM)" forState:UIControlStateNormal];
         [testButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
         testButton.titleLabel.font = [UIFont systemFontOfSize:15 weight:UIFontWeightBold];
-        testButton.layer.cornerRadius = 12;
+        testButton.layer.cornerRadius = 14;
         [testButton addTarget:self action:@selector(runStressTestTapped) forControlEvents:UIControlEventTouchUpInside];
         [cardView addSubview:testButton];
-
-        UIButton *closeButton = [UIButton buttonWithType:UIButtonTypeSystem];
-        closeButton.frame = CGRectMake(cardView.frame.size.width - 45, 15, 30, 30);
-        [closeButton setTitle:@"✕" forState:UIControlStateNormal];
-        [closeButton setTitleColor:[UIColor lightGrayColor] forState:UIControlStateNormal];
-        closeButton.titleLabel.font = [UIFont systemFontOfSize:18 weight:UIFontWeightBold];
-        [closeButton addTarget:self action:@selector(closeTapped) forControlEvents:UIControlEventTouchUpInside];
-        [cardView addSubview:closeButton];
     }
     return self;
 }
@@ -305,7 +340,6 @@ static UIWindow *fullScreenMenuWindow = nil;
 
         PerfFullScreenMenuView *menuView = [[PerfFullScreenMenuView alloc] initWithFrame:fullScreenMenuWindow.bounds];
         
-        // Unsafe unretained pointer replacement for manual reference counting (MRC) compatibility
         __block UIWindow *menuWinRef = fullScreenMenuWindow;
         menuView.onClose = ^{
             menuWinRef.hidden = YES;
