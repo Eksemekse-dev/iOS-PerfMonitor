@@ -1,0 +1,103 @@
+#import <UIKit/UIKit.h>
+#import <mach/mach.h>
+
+@interface PerfMonitorWindow : UIWindow
+@property (nonatomic, strong) UILabel *infoLabel;
+@property (nonatomic, strong) NSTimer *timer;
+@end
+
+@implementation PerfMonitorWindow
+
+- (instancetype)initWithFrame:(CGRect)frame {
+    if (self = [super initWithFrame:frame]) {
+        self.windowLevel = UIWindowLevelAlert + 1000;
+        self.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.7];
+        self.layer.cornerRadius = 12;
+        self.layer.masksToBounds = YES;
+        self.userInteractionEnabled = YES;
+
+        _infoLabel = [[UILabel alloc] initWithFrame:self.bounds];
+        _infoLabel.textColor = [UIColor whiteColor];
+        _infoLabel.font = [UIFont boldSystemFontOfSize:11];
+        _infoLabel.numberOfLines = 0;
+        _infoLabel.textAlignment = NSTextAlignmentCenter;
+        [self addSubview:_infoLabel];
+
+        // Obsługa przeciągania okienka palcem
+        UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handlePan:)];
+        [self addGestureRecognizer:pan];
+
+        // Start odświeżania co 1 sekundę
+        _timer = [NSTimer scheduledTimerWithTimeInterval:1.0 target:self selector:@selector(updateStats) userInfo:nil repeats:YES];
+    }
+    return self;
+}
+
+- (void)handlePan:(UIPanGestureRecognizer *)pan {
+    CGPoint translation = [pan translationInView:self.superview];
+    self.center = CGPointMake(self.center.x + translation.x, self.center.y + translation.y);
+    [pan setTranslation:CGPointZero inView:self.superview];
+}
+
+- (void)updateStats {
+    // 1. Odczyt użycia RAM przez aplikację
+    struct task_basic_info info;
+    mach_msg_type_number_t size = TASK_BASIC_INFO_COUNT;
+    task_info(mach_task_self(), TASK_BASIC_INFO, (task_info_t)&info, &size);
+    double ramMB = info.resident_size / (1024.0 * 1024.0);
+
+    // 2. Odczyt stanu termicznego (Thermal State)
+    NSProcessInfoThermalState thermal = [[NSProcessInfo] thermalState];
+    NSString *thermalStr = @"Norma";
+    if (thermal == NSProcessInfoThermalStateFair) thermalStr = @"Ciepło";
+    else if (thermal == NSProcessInfoThermalStateSerious) thermalStr = @"Gorąco";
+    else if (thermal == NSProcessInfoThermalStateCritical) thermalStr = @"Przegrzanie!";
+
+    // 3. Użycie procesora (szacowane)
+    float cpuUsage = [self getCPUUsage];
+
+    self.infoLabel.text = [NSString stringWithFormat:@"RAM: %.1f MB\nCPU: %.1f%%\nTemp: %@", ramMB, cpuUsage, thermalStr];
+}
+
+- (float)getCPUUsage {
+    kern_return_t kr;
+    task_info_data_t tinfo;
+    mach_msg_type_number_t task_info_count = TASK_INFO_MAX;
+    kr = task_info(mach_task_self(), TASK_BASIC_INFO, (task_info_t)tinfo, &task_info_count);
+    if (kr != KERN_SUCCESS) return -1;
+
+    thread_array_t thread_list;
+    mach_msg_type_number_t thread_count;
+    thread_basic_info_t basic_info_th;
+    mach_msg_type_number_t thread_info_count;
+
+    kr = task_threads(mach_task_self(), &thread_list, &thread_count);
+    if (kr != KERN_SUCCESS) return -1;
+
+    float total_cpu = 0;
+    for (int j = 0; j < thread_count; j++) {
+        thread_info_count = THREAD_INFO_MAX;
+        basic_info_th = (thread_basic_info_t)malloc(sizeof(thread_basic_info_struct));
+        kr = thread_info(thread_list[j], THREAD_BASIC_INFO, (thread_info_t)basic_info_th, &thread_info_count);
+        if (kr == KERN_SUCCESS && !(basic_info_th->flags & TH_FLAGS_IDLE)) {
+            total_cpu += basic_info_th->cpu_usage / (float)TH_USAGE_SCALE * 100.0;
+        }
+        free(basic_info_th);
+    }
+    vm_deallocate(mach_task_self(), (vm_address_t)thread_list, thread_count * sizeof(thread_act_t));
+    return total_cpu;
+}
+
+@end
+
+static PerfMonitorWindow *monitorWindow = nil;
+
+%hook UIApplication
+- (void)didFinishLaunchingWithOptions:(id)arg1 {
+    %orig;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        monitorWindow = [[PerfMonitorWindow alloc] initWithFrame:CGRectMake(50, 100, 130, 65)];
+        monitorWindow.hidden = NO;
+    });
+}
+%end
