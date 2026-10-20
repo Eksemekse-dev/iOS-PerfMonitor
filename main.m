@@ -3,6 +3,7 @@
 #import <sys/sysctl.h>
 #import <sys/types.h>
 #include <unistd.h>
+#include <dlfcn.h>
 
 // --- FLOATING PERFORMANCE MONITOR (PiP) ---
 @interface PerfMonitorView : UIView
@@ -105,24 +106,21 @@
 
 - (instancetype)initWithFrame:(CGRect)frame {
     if (self = [super initWithFrame:frame]) {
-        // Modern iOS Blur Effect background
         UIBlurEffect *blurEffect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleDark];
         UIVisualEffectView *blurView = [[UIVisualEffectView alloc] initWithEffect:blurEffect];
         blurView.frame = self.bounds;
         blurView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
         [self addSubview:blurView];
 
-        // Main card panel container
         UIView *cardView = [[UIView alloc] initWithFrame:CGRectMake(30, 60, frame.size.width - 60, frame.size.height - 120)];
         cardView.center = CGPointMake(frame.size.width / 2.0, frame.size.height / 2.0);
         cardView.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin | UIViewAutoresizingFlexibleRightMargin | UIViewAutoresizingFlexibleTopMargin | UIViewAutoresizingFlexibleBottomMargin;
-        cardView.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.65];
+        cardView.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.85];
         cardView.layer.cornerRadius = 24;
         cardView.layer.borderWidth = 1.0;
         cardView.layer.borderColor = [[UIColor whiteColor] colorWithAlphaComponent:0.2].CGColor;
         [self addSubview:cardView];
 
-        // Title Label
         UILabel *titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, 20, cardView.frame.size.width - 40, 30)];
         titleLabel.text = @"⚡ PerfMonitor Dashboard";
         titleLabel.textColor = [UIColor whiteColor];
@@ -130,14 +128,14 @@
         titleLabel.textAlignment = NSTextAlignmentCenter;
         [cardView addSubview:titleLabel];
 
-        // Fetch system info and debugger state
-        struct kinfo_proc info;
-        memset(&info, 0, sizeof(info));
+        // Safe debugger check using sysctl info flags alternative
         int mib[4] = { CTL_KERN, KERN_PROC, KERN_PROC_PID, getpid() };
+        struct kinfo_proc info;
         size_t size = sizeof(info);
         BOOL debuggerAttached = NO;
         if (sysctl(mib, 4, &info, &size, NULL, 0) == 0) {
-            debuggerAttached = (info.p_flag & P_TRACED) != 0;
+            // Check process flags safely across iOS SDK variants
+            debuggerAttached = ((info.kp_proc.p_flag & P_TRACED) != 0);
         }
 
         struct task_basic_info taskInfo;
@@ -148,7 +146,6 @@
         NSString *bundleId = [[NSBundle mainBundle] bundleIdentifier] ?: @"Unknown";
         NSString *iosVersion = [[UIDevice currentDevice] systemVersion];
 
-        // Specification TextView
         UITextView *textView = [[UITextView alloc] initWithFrame:CGRectMake(20, 70, cardView.frame.size.width - 40, cardView.frame.size.height - 160)];
         textView.backgroundColor = [UIColor clearColor];
         textView.textColor = [UIColor whiteColor];
@@ -164,7 +161,6 @@
                          iosVersion, bundleId, debuggerAttached ? @"YES (Connected)" : @"NO (Clean)", appRamMB, totalDeviceRam];
         [cardView addSubview:textView];
 
-        // RAM Stress Test Button
         UIButton *testButton = [UIButton buttonWithType:UIButtonTypeSystem];
         testButton.frame = CGRectMake(20, cardView.frame.size.height - 75, cardView.frame.size.width - 40, 44);
         testButton.backgroundColor = [UIColor systemRedColor];
@@ -175,7 +171,6 @@
         [testButton addTarget:self action:@selector(runStressTestTapped) forControlEvents:UIControlEventTouchUpInside];
         [cardView addSubview:testButton];
 
-        // Close Menu Button
         UIButton *closeButton = [UIButton buttonWithType:UIButtonTypeSystem];
         closeButton.frame = CGRectMake(cardView.frame.size.width - 45, 15, 30, 30);
         [closeButton setTitle:@"✕" forState:UIControlStateNormal];
@@ -292,7 +287,7 @@ static UIWindow *fullScreenMenuWindow = nil;
 
 + (void)handleFourFingerLongPress:(UILongPressGestureRecognizer *)sender {
     if (sender.state == UIGestureRecognizerStateBegan) {
-        if (fullScreenMenuWindow) return; // Menu already open
+        if (fullScreenMenuWindow) return;
 
         UIWindowScene *targetScene = nil;
         for (UIWindowScene *scene in [UIApplication sharedApplication].connectedScenes) {
@@ -303,7 +298,6 @@ static UIWindow *fullScreenMenuWindow = nil;
         }
         if (!targetScene) return;
 
-        // Create a dedicated window for the full-screen modern menu
         fullScreenMenuWindow = [[UIWindow alloc] initWithFrame:targetScene.coordinateSpace.bounds];
         fullScreenMenuWindow.windowScene = targetScene;
         fullScreenMenuWindow.windowLevel = UIWindowLevelAlert + 2000;
@@ -311,9 +305,10 @@ static UIWindow *fullScreenMenuWindow = nil;
 
         PerfFullScreenMenuView *menuView = [[PerfFullScreenMenuView alloc] initWithFrame:fullScreenMenuWindow.bounds];
         
-        __weak typeof(fullScreenMenuWindow) weakMenuWin = fullScreenMenuWindow;
+        // Unsafe unretained pointer replacement for manual reference counting (MRC) compatibility
+        __block UIWindow *menuWinRef = fullScreenMenuWindow;
         menuView.onClose = ^{
-            weakMenuWin.hidden = YES;
+            menuWinRef.hidden = YES;
             fullScreenMenuWindow = nil;
         };
         
@@ -322,8 +317,8 @@ static UIWindow *fullScreenMenuWindow = nil;
                                                                              message:@"This test will allocate RAM until the app crashes to measure limits. Continue?"
                                                                       preferredStyle:UIAlertControllerStyleAlert];
             [confirm addAction:[UIAlertAction actionWithTitle:@"Start" style:UIAlertActionStyleDestructive handler:^(UIAlertAction * _Nonnull act) {
-                if (weakMenuWin) {
-                    weakMenuWin.hidden = YES;
+                if (menuWinRef) {
+                    menuWinRef.hidden = YES;
                     fullScreenMenuWindow = nil;
                 }
                 [PerfMonitorManager runRamStressTest];
@@ -331,7 +326,7 @@ static UIWindow *fullScreenMenuWindow = nil;
             [confirm addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
             
             UIViewController *vc = [[UIViewController alloc] init];
-            weakMenuWin.rootViewController = vc;
+            menuWinRef.rootViewController = vc;
             [vc presentViewController:confirm animated:YES completion:nil];
         };
 
@@ -367,7 +362,7 @@ __attribute__((constructor)) static void tweakEntry() {
             sharedMonitorWindow = [[PerfMonitorWindow alloc] initWithFrame:CGRectMake(0, 0, 140, 70)];
             sharedMonitorWindow.center = CGPointMake(screenSize.width / 2.0, 90.0);
             sharedMonitorWindow.windowLevel = UIWindowLevelAlert + 1000;
-            sharedMonitorWindow.hidden = YES; // Hidden by default
+            sharedMonitorWindow.hidden = YES;
             
             if (@available(iOS 13.0, *)) {
                 for (UIWindowScene *scene in [UIApplication sharedApplication].connectedScenes) {
@@ -381,12 +376,10 @@ __attribute__((constructor)) static void tweakEntry() {
             PerfMonitorView *monitorView = [[PerfMonitorView alloc] initWithFrame:sharedMonitorWindow.bounds];
             [sharedMonitorWindow addSubview:monitorView];
             
-            // 4-finger single tap -> PiP visibility toggle
             UITapGestureRecognizer *fourFingerTap = [[UITapGestureRecognizer alloc] initWithTarget:[PerfMonitorGestureHandler class] action:@selector(handleFourFingerTap:)];
             fourFingerTap.numberOfTouchesRequired = 4;
             [targetWindow addGestureRecognizer:fourFingerTap];
 
-            // 4-finger long press (2s) -> Opens modern full-screen menu
             UILongPressGestureRecognizer *fourFingerLongPress = [[UILongPressGestureRecognizer alloc] initWithTarget:[PerfMonitorGestureHandler class] action:@selector(handleFourFingerLongPress:)];
             fourFingerLongPress.numberOfTouchesRequired = 4;
             fourFingerLongPress.minimumPressDuration = 2.0;
