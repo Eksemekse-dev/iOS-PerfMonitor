@@ -19,14 +19,13 @@
         self.layer.borderColor = [[UIColor whiteColor] colorWithAlphaComponent:0.2].CGColor;
         self.userInteractionEnabled = YES;
 
-        // Dodanie obsługi przeciągania (drag & drop gestem)
         UIPanGestureRecognizer *panGesture = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handlePan:)];
         [self addGestureRecognizer:panGesture];
 
         _infoLabel = [[UILabel alloc] initWithFrame:self.bounds];
         _infoLabel.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
         _infoLabel.textColor = [UIColor whiteColor];
-        _infoLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightSemibold];
+        _infoLabel.font = [UIFont systemFontOfSize:11 weight:UIFontWeightSemibold];
         _infoLabel.numberOfLines = 0;
         _infoLabel.textAlignment = NSTextAlignmentCenter;
         [self addSubview:_infoLabel];
@@ -43,7 +42,6 @@
     } else if (gesture.state == UIGestureRecognizerStateChanged) {
         self.center = CGPointMake(_startTouchPosition.x + translation.x, _startTouchPosition.y + translation.y);
     } else if (gesture.state == UIGestureRecognizerStateEnded) {
-        // Opcjonalne: dosunięcie do krawędzi, żeby nie zgubić okienka poza ekranem
         CGRect screenRect = [UIScreen mainScreen].bounds;
         CGPoint center = self.center;
         if (center.x < 0) center.x = 70;
@@ -58,13 +56,11 @@
 }
 
 - (void)updateStats {
-    // 1. Obliczanie RAM-u
     struct task_basic_info info;
     mach_msg_type_number_t size = TASK_BASIC_INFO_COUNT;
     task_info(mach_task_self(), TASK_BASIC_INFO, (task_info_t)&info, &size);
     double ramMB = info.resident_size / (1024.0 * 1024.0);
 
-    // 2. Obliczanie CPU (Thread info)
     thread_array_t thread_list;
     mach_msg_type_number_t thread_count;
     float cpuUsage = 0;
@@ -82,49 +78,58 @@
         vm_deallocate(mach_task_self(), (vm_address_t)thread_list, thread_count * sizeof(thread_t));
     }
 
-    // 3. Stan termiczny (Temperatura)
     NSProcessInfoThermalState thermal = [[NSProcessInfo processInfo] thermalState];
     NSString *thermalStr = @"Normal";
     if (thermal == NSProcessInfoThermalStateFair) thermalStr = @"Warm";
     else if (thermal == NSProcessInfoThermalStateSerious) thermalStr = @"Hot";
     else if (thermal == NSProcessInfoThermalStateCritical) thermalStr = @"Critical!";
 
-    // Aktualizacja etykiety w języku angielskim
     self.infoLabel.text = [NSString stringWithFormat:@"CPU: %.1f%%\nRAM: %.1f MB\nTemp: %@", cpuUsage, ramMB, thermalStr];
 }
 
 @end
 
-// Klasa pomocnicza dla okna, pozwalająca dotykać aplikacji pod spodem, ale przesuwać samo okienko
 @interface PerfMonitorWindow : UIWindow
 @end
 
 @implementation PerfMonitorWindow
 - (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
     UIView *view = [super hitTest:point withEvent:event];
-    return (view == self) ? nil : view; // Przepuszcza kliknięcia tam, gdzie nie ma kontrolek
+    return (view == self) ? nil : view;
 }
 @end
 
 __attribute__((constructor)) static void tweakEntry() {
-    [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidFinishLaunchingNotification
-                                                      object:nil
-                                                       queue:[NSOperationQueue mainQueue]
-                                                  usingBlock:^(NSNotification *note) {
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            UIWindow *keyWindow = [UIApplication sharedApplication].keyWindow;
-            if (!keyWindow) return;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidFinishLaunchingNotification
+                                                          object:nil
+                                                           queue:[NSOperationQueue mainQueue]
+                                                      usingBlock:^(NSNotification *note) {
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                UIWindow *targetWindow = nil;
+                for (UIWindowScene *scene in [UIApplication sharedApplication].connectedScenes) {
+                    if (scene.activationState == UISceneActivationStateForegroundActive) {
+                        for (UIWindow *win in scene.windows) {
+                            if (win.isKeyWindow) {
+                                targetWindow = win;
+                                break;
+                            }
+                        }
+                    }
+                }
+                if (!targetWindow) {
+                    targetWindow = [UIApplication sharedApplication].windows.firstObject;
+                }
+                if (!targetWindow) return;
 
-            // Tworzenie pływającego okna w stylu natywnego PiP / floating overlay
-            PerfMonitorWindow *monitorWindow = [[PerfMonitorWindow alloc] initWithFrame:CGRectMake(20, 60, 130, 65)];
-            monitorWindow.windowLevel = UIWindowLevelAlert + 1000;
-            monitorWindow.hidden = NO;
-            
-            PerfMonitorView *monitorView = [[PerfMonitorView alloc] initWithFrame:monitorWindow.bounds];
-            [monitorWindow addSubview:monitorView];
-            
-            // Przypisanie okna do głównego widoku, żeby żyło razem z aplikacją
-            [keyWindow addSubview:monitorWindow];
-        });
+                PerfMonitorWindow *monitorWindow = [[PerfMonitorWindow alloc] initWithFrame:CGRectMake(20, 80, 130, 65)];
+                monitorWindow.windowLevel = UIWindowLevelAlert + 1000;
+                monitorWindow.hidden = NO;
+                
+                PerfMonitorView *monitorView = [[PerfMonitorView alloc] initWithFrame:monitorWindow.bounds];
+                [monitorWindow addSubview:monitorView];
+                [targetWindow addSubview:monitorWindow];
+            });
+        }];
     });
 }
