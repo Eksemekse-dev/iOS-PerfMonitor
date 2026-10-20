@@ -31,6 +31,27 @@ A professional, system-level performance monitoring and diagnostic overlay desig
 
 ---
 
+## Installation & Setup Guide
+
+Follow these steps to properly install and configure the performance overlay within your application environment.
+
+### Step 1
+Download the latest compiled binary (`.dylib`) file from the repository Releases section.
+
+### Step 2
+![Step 2 Setup](help/2.heic)
+
+### Step 3
+![Step 3 Setup](help/3.heic)
+
+### Step 4
+![Step 4 Setup](help/4.heic)
+
+### Step 5
+![Step 5 Setup](help/5.heic)
+
+---
+
 ## Technical Architecture
 
 Compiled via `clang` for `iphoneos`, the library injects directly into the target process lifecycle, establishing an independent high-priority `UIWindow` (`UIWindowLevelAlert`) that persists across application view transitions without interfering with the host app's UI hierarchy.
