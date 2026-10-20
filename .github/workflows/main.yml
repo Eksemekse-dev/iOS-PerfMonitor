@@ -1,4 +1,4 @@
-name: Build dylib
+name: Build dylib Clang
 
 on:
   push:
@@ -8,23 +8,23 @@ on:
 jobs:
   build:
     runs-on: macos-14
-    env:
-      THEOS: ${{ github.workspace }}/theos
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install Theos
+      - name: Compile dylib
         run: |
-          git clone --recursive https://github.com/theos/theos.git $THEOS
-
-      - name: Build Tweak
-        run: |
-          make package FINALPACKAGE=1
+          xcrun --sdk iphoneos clang -dynamiclib \
+            -arch arm64 \
+            -framework Foundation \
+            -framework UIKit \
+            -framework CoreGraphics \
+            main.m \
+            -o PerfMonitor.dylib
 
       - name: Upload dylib artifact
         uses: actions/upload-artifact@v4
         with:
           name: PerfMonitor-dylib
-          path: .theos/obj/debug/PerfMonitor.dylib
+          path: PerfMonitor.dylib
