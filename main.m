@@ -105,7 +105,7 @@ static PerfMonitorWindow *sharedMonitorWindow = nil;
 @implementation PerfMonitorManager
 
 + (NSString *)getTestResultFilePath {
-    NSString *bundleId = [[NSBundle mainBundle] bundleIdentifier] ?: "unknown_app";
+    NSString *bundleId = [[NSBundle mainBundle] bundleIdentifier] ?: @"unknown_app";
     NSArray *paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
     NSString *documentsDirectory = [paths objectAtIndex:0];
     return [documentsDirectory stringByAppendingPathComponent:[NSString stringWithFormat:@"%@_ram_test_state.plist", bundleId]];
@@ -122,7 +122,6 @@ static PerfMonitorWindow *sharedMonitorWindow = nil;
 }
 
 + (BOOL)isJITActive {
-    // Sprawdzenie alokacji pamięci wykonywalnej jako test JIT
     void *addr = mmap(NULL, getpagesize(), PROT_READ | PROT_WRITE | PROT_EXEC, MAP_ANON | MAP_PRIVATE, -1, 0);
     if (addr == MAP_FAILED) return NO;
     munmap(addr, getpagesize());
@@ -132,7 +131,6 @@ static PerfMonitorWindow *sharedMonitorWindow = nil;
 + (void)runRamStressTest {
     NSString *filePath = [self getTestResultFilePath];
     
-    // Zapisujemy stan początkowy testu (oznaczenie, że test trwał)
     [@{
         @"status": @"running",
         @"allocatedMB": @(0)
@@ -141,36 +139,26 @@ static PerfMonitorWindow *sharedMonitorWindow = nil;
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
         NSMutableArray *chunks = [NSMutableArray array];
         int totalAllocatedMB = 0;
-        int chunkSizeMB = 50; // alokacja paczkami po 50 MB
+        int chunkSizeMB = 50;
         
         while (YES) {
             @autoreleasepool {
                 char *chunk = malloc(chunkSizeMB * 1024 * 1024);
                 if (!chunk) break;
-                // Zapisujemy dane, żeby system faktycznie przypisał fizyczne strony RAM
                 memset(chunk, 1, chunkSizeMB * 1024 * 1024);
                 [chunks addObject:[NSData dataWithBytesNoCopy:chunk length:chunkSizeMB * 1024 * 1024 freeWhenDone:YES]];
                 
                 totalAllocatedMB += chunkSizeMB;
                 
-                // Na bieżąco zapisujemy stan do pliku izolowanego dla tego bundleId
                 NSDictionary *state = @{
                     @"status": @"running",
                     @"allocatedMB": @(totalAllocatedMB)
                 };
                 [state writeToFile:filePath atomically:YES];
                 
-                // Krótka pauza, żeby nie zaciąć wątku głównego całkowicie
-                usleep(50000); // 50ms
+                usleep(50000);
             }
         }
-        
-        // Jeśli jakimś cudem test dotarł do końca bez OOM killera
-        NSDictionary *successState = @{
-            @"status": @"completed",
-            @"allocatedMB": @(totalAllocatedMB)
-        };
-        [successState writeToFile:filePath atomically:YES];
     });
 }
 
@@ -185,28 +173,29 @@ static PerfMonitorWindow *sharedMonitorWindow = nil;
     NSNumber *allocatedMB = state[@"allocatedMB"];
     
     if ([status isEqualToString:@"running"]) {
-        // Aplikacja zginęła w trakcie testu (OOM Crash)!
         [[NSFileManager defaultManager] removeItemAtPath:filePath error:nil];
         
         dispatch_async(dispatch_get_main_queue(), ^{
-            UIWindow *keyWindow = [UIApplication sharedApplication].keyWindow;
-            UIViewController *rootVC = keyWindow.rootViewController;
-            
+            UIWindow *keyWindow = nil;
+            for (UIWindowScene *scene in [UIApplication sharedApplication].connectedScenes) {
+                if ([scene isKindOfClass:[UIWindowScene class]]) {
+                    for (UIWindow *win in scene.windows) {
+                        if (win.isKeyWindow) {
+                            keyWindow = win;
+                            break;
+                        }
+                    }
+                }
+                if (keyWindow) break;
+            }
+            UIViewController *rootVC = keyWindow ? keyWindow.rootViewController : nil;
+            while (rootVC.presentedViewController) {
+                rootVC = rootVC.presentedViewController;
+            }
+            if (!rootVC) return;
+
             UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"RAM Test Result (Crash OOM)"
                                                                            message:[NSString stringWithFormat:@"App crashed due to Out Of Memory!\nMax allocated RAM before crash: %@ MB", allocatedMB]
-                                                                    preferredStyle:UIAlertControllerStyleAlert];
-            [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
-            [rootVC presentViewController:alert animated:YES completion:nil];
-        });
-    } else if ([status isEqualToString:@"completed"]) {
-        [[NSFileManager defaultManager] removeItemAtPath:filePath error:nil];
-        
-        dispatch_async(dispatch_get_main_queue(), ^{
-            UIWindow *keyWindow = [UIApplication sharedApplication].keyWindow;
-            UIViewController *rootVC = keyWindow.rootViewController;
-            
-            UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"RAM Test Result"
-                                                                           message:[NSString stringWithFormat:@"Test completed successfully!\nTotal allocated RAM: %@ MB", allocatedMB]
                                                                     preferredStyle:UIAlertControllerStyleAlert];
             [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
             [rootVC presentViewController:alert animated:YES completion:nil];
@@ -223,14 +212,34 @@ static PerfMonitorWindow *sharedMonitorWindow = nil;
 
 + (void)handleFourFingerTap:(UITapGestureRecognizer *)sender {
     if (sender.state == UIGestureRecognizerStateRecognized) {
-        UIWindow *keyWindow = [UIApplication sharedApplication].keyWindow;
-        UIViewController *rootVC = keyWindow.rootViewController;
+        if (sharedMonitorWindow) {
+            // Stukanie 4 palcami przełącza widoczność małego PiP
+            sharedMonitorWindow.hidden = !sharedMonitorWindow.hidden;
+        }
+    }
+}
+
++ (void)handleFourFingerLongPress:(UILongPressGestureRecognizer *)sender {
+    if (sender.state == UIGestureRecognizerStateBegan) {
+        UIWindow *keyWindow = nil;
+        for (UIWindowScene *scene in [UIApplication sharedApplication].connectedScenes) {
+            if ([scene isKindOfClass:[UIWindowScene class]]) {
+                for (UIWindow *win in scene.windows) {
+                    if (win.isKeyWindow) {
+                        keyWindow = win;
+                        break;
+                    }
+                }
+            }
+            if (keyWindow) break;
+        }
+        
+        UIViewController *rootVC = keyWindow ? keyWindow.rootViewController : nil;
         while (rootVC.presentedViewController) {
             rootVC = rootVC.presentedViewController;
         }
         if (!rootVC) return;
 
-        // Zbieranie informacji o systemie i środowisku
         NSString *model = [PerfMonitorManager getDeviceModelName];
         NSString *iosVersion = [[UIDevice currentDevice] systemVersion];
         BOOL jitActive = [PerfMonitorManager isJITActive];
@@ -240,7 +249,6 @@ static PerfMonitorWindow *sharedMonitorWindow = nil;
         task_info(mach_task_self(), TASK_BASIC_INFO, (task_info_t)&info, &size);
         double appRamMB = info.resident_size / (1024.0 * 1024.0);
         unsigned long long totalDeviceRam = [[NSProcessInfo processInfo] physicalMemory] / (1024 * 1024);
-        
         NSString *bundleId = [[NSBundle mainBundle] bundleIdentifier] ?: @"Unknown";
 
         NSString *message = [NSString stringWithFormat:
@@ -251,14 +259,6 @@ static PerfMonitorWindow *sharedMonitorWindow = nil;
                                                                        message:message
                                                                 preferredStyle:UIAlertControllerStyleAlert];
 
-        // Przycisk przełączania widoczności pływającego okienka
-        [menu addAction:[UIAlertAction actionWithTitle:sharedMonitorWindow.isHidden ? @"Show Overlay" : @"Hide Overlay"
-                                                 style:UIAlertActionStyleDefault
-                                               handler:^(UIAlertAction * _Nonnull action) {
-            sharedMonitorWindow.hidden = !sharedMonitorWindow.hidden;
-        }]];
-
-        // Przycisk testu RAM
         [menu addAction:[UIAlertAction actionWithTitle:@"Run RAM Stress Test (OOM)"
                                                  style:UIAlertActionStyleDestructive
                                                handler:^(UIAlertAction * _Nonnull action) {
@@ -289,21 +289,29 @@ static PerfMonitorWindow *sharedMonitorWindow = nil;
 
 __attribute__((constructor)) static void tweakEntry() {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        UIWindow *keyWindow = nil;
+        UIWindow *targetWindow = nil;
         for (UIWindowScene *scene in [UIApplication sharedApplication].connectedScenes) {
             if ([scene isKindOfClass:[UIWindowScene class]]) {
                 for (UIWindow *win in scene.windows) {
                     if (win.isKeyWindow) {
-                        keyWindow = win;
+                        targetWindow = win;
                         break;
                     }
                 }
             }
-            if (keyWindow) break;
+            if (targetWindow) break;
         }
-        if (!keyWindow) keyWindow = [UIApplication sharedApplication].windows.firstObject;
+        
+        if (!targetWindow) {
+            for (UIWindowScene *scene in [UIApplication sharedApplication].connectedScenes) {
+                if ([scene isKindOfClass:[UIWindowScene class]]) {
+                    targetWindow = scene.windows.firstObject;
+                    if (targetWindow) break;
+                }
+            }
+        }
 
-        if (keyWindow && !sharedMonitorWindow) {
+        if (targetWindow && !sharedMonitorWindow) {
             CGSize screenSize = [UIScreen mainScreen].bounds.size;
             sharedMonitorWindow = [[PerfMonitorWindow alloc] initWithFrame:CGRectMake(0, 0, 140, 70)];
             sharedMonitorWindow.center = CGPointMake(screenSize.width / 2.0, 90.0);
@@ -322,18 +330,22 @@ __attribute__((constructor)) static void tweakEntry() {
             PerfMonitorView *monitorView = [[PerfMonitorView alloc] initWithFrame:sharedMonitorWindow.bounds];
             [sharedMonitorWindow addSubview:monitorView];
             
-            // Gest 4 palców wywołujący menu
+            // Pojedyncze stuknięcie 4 palcami -> włącza/wyłącza widok PiP
             UITapGestureRecognizer *fourFingerTap = [[UITapGestureRecognizer alloc] initWithTarget:[PerfMonitorGestureHandler class] action:@selector(handleFourFingerTap:)];
             fourFingerTap.numberOfTouchesRequired = 4;
-            [keyWindow addGestureRecognizer:fourFingerTap];
+            [targetWindow addGestureRecognizer:fourFingerTap];
 
-            // Rotacja ekranu
+            // Przytrzymanie 4 palcami przez 2 sekundy -> otwiera ukryte menu diagnostyczne
+            UILongPressGestureRecognizer *fourFingerLongPress = [[UILongPressGestureRecognizer alloc] initWithTarget:[PerfMonitorGestureHandler class] action:@selector(handleFourFingerLongPress:)];
+            fourFingerLongPress.numberOfTouchesRequired = 4;
+            fourFingerLongPress.minimumPressDuration = 2.0;
+            [targetWindow addGestureRecognizer:fourFingerLongPress];
+
             [[NSNotificationCenter defaultCenter] addObserver:[PerfMonitorGestureHandler class]
                                                      selector:@selector(handleOrientationChange:)
                                                          name:UIDeviceOrientationDidChangeNotification
                                                        object:nil];
             
-            // Sprawdzenie, czy poprzednia sesja zakończyła się crashem OOM dla tej konkretnej aplikacji
             [PerfMonitorManager checkPreviousCrashOrTestResult];
         }
     });
