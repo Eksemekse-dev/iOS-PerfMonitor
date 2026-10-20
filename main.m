@@ -132,7 +132,7 @@
         titleLabel.font = [UIFont systemFontOfSize:17 weight:UIFontWeightBold];
         [cardView addSubview:titleLabel];
 
-        // Przycisk Share (Udostępnij)
+        // Share Button
         UIButton *shareButton = [UIButton buttonWithType:UIButtonTypeSystem];
         shareButton.frame = CGRectMake(cardView.frame.size.width - 80, 20, 30, 30);
         [shareButton setImage:[UIImage systemImageNamed:@"square.and.arrow.up"] forState:UIControlStateNormal];
@@ -140,7 +140,7 @@
         [shareButton addTarget:self action:@selector(shareTapped) forControlEvents:UIControlEventTouchUpInside];
         [cardView addSubview:shareButton];
 
-        // Przycisk Zamknięcia
+        // Close Button
         UIButton *closeButton = [UIButton buttonWithType:UIButtonTypeSystem];
         closeButton.frame = CGRectMake(cardView.frame.size.width - 42, 20, 30, 30);
         [closeButton setImage:[UIImage systemImageNamed:@"xmark.circle.fill"] forState:UIControlStateNormal];
@@ -148,7 +148,7 @@
         [closeButton addTarget:self action:@selector(closeTapped) forControlEvents:UIControlEventTouchUpInside];
         [cardView addSubview:closeButton];
 
-        // Pobieranie danych systemowych
+        // System info retrieval
         int mib[4] = { CTL_KERN, KERN_PROC, KERN_PROC_PID, getpid() };
         struct kinfo_proc info;
         size_t size = sizeof(info);
@@ -165,7 +165,6 @@
         NSString *bundleId = [[NSBundle mainBundle] bundleIdentifier] ?: @"Unknown";
         NSString *iosVersion = [[UIDevice currentDevice] systemVersion];
 
-        // Przygotowanie tekstu do udostępniania
         self.shareSummaryText = [NSString stringWithFormat:
                                  @"📊 PerfMonitor Diagnostics\n"
                                  @"------------------------\n"
@@ -217,12 +216,10 @@
             valLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightBold];
             valLabel.textAlignment = NSTextAlignmentRight;
             valLabel.userInteractionEnabled = NO;
+            valLabel.tag = 999; // Tag do łatwego kopiowania wartości
             [rowButton addSubview:valLabel];
 
-            // Dodanie akcji kopiowania do schowka
             [rowButton addTarget:self action:@selector(copyRowValue:) forControlEvents:UIControlEventTouchUpInside];
-            objc_setAssociatedObject(rowButton, "copyValue", item[@"value"], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-
             [scrollView addSubview:rowButton];
             yOffset += 56;
         }
@@ -241,37 +238,39 @@
     return self;
 }
 
-// Obsługa kopiowania do schowka po kliknięciu kafelka
 - (void)copyRowValue:(UIButton *)sender {
-    NSString *valueToCopy = objc_getAssociatedObject(sender, "copyValue");
-    if (valueToCopy) {
-        [UIPasteboard generalPasteboard].string = valueToCopy;
+    for (UIView *subview in sender.subviews) {
+        if ([subview isKindOfClass:[UILabel class]] && subview.tag == 999) {
+            UILabel *valLabel = (UILabel *)subview;
+            if (valLabel.text) {
+                [UIPasteboard generalPasteboard].string = valLabel.text;
 
-        // Wibracja Haptic feedback
-        UIImpactFeedbackGenerator *generator = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleLight];
-        [generator impactOccurred];
+                UIImpactFeedbackGenerator *generator = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleLight];
+                [generator impactOccurred];
 
-        // Pokazanie dymka z informacją o skopiowaniu
-        UILabel *toast = [[UILabel alloc] initWithFrame:CGRectMake((self.frame.size.width - 160) / 2.0, self.frame.size.height - 110, 160, 36)];
-        toast.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.85];
-        toast.textColor = [UIColor whiteColor];
-        toast.font = [UIFont systemFontOfSize:12 weight:UIFontWeightBold];
-        toast.textAlignment = NSTextAlignmentCenter;
-        toast.text = @"Copied to clipboard!";
-        toast.layer.cornerRadius = 18;
-        toast.layer.masksToBounds = YES;
-        toast.alpha = 0.0;
-        [self addSubview:toast];
-
-        [UIView animateWithDuration:0.2 animations:^{
-            toast.alpha = 1.0;
-        } completion:^(BOOL finished) {
-            [UIView animateWithDuration:0.3 delay:1.2 options:0 animations:^{
+                UILabel *toast = [[UILabel alloc] initWithFrame:CGRectMake((self.frame.size.width - 160) / 2.0, self.frame.size.height - 110, 160, 36)];
+                toast.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.85];
+                toast.textColor = [UIColor whiteColor];
+                toast.font = [UIFont systemFontOfSize:12 weight:UIFontWeightBold];
+                toast.textAlignment = NSTextAlignmentCenter;
+                toast.text = @"Copied to clipboard!";
+                toast.layer.cornerRadius = 18;
+                toast.layer.masksToBounds = YES;
                 toast.alpha = 0.0;
-            } completion:^(BOOL finished) {
-                [toast removeFromSuperview];
-            }];
-        }];
+                [self addSubview:toast];
+
+                [UIView animateWithDuration:0.2 animations:^{
+                    toast.alpha = 1.0;
+                } completion:^(BOOL finished) {
+                    [UIView animateWithDuration:0.3 delay:1.2 options:0 animations:^{
+                        toast.alpha = 0.0;
+                    } completion:^(BOOL finished) {
+                        [toast removeFromSuperview];
+                    }];
+                }];
+            }
+            break;
+        }
     }
 }
 
@@ -439,7 +438,7 @@ static UIWindow *fullScreenMenuWindow = nil;
 }
 
 + (void)handleOrientationChange:(NSNotification *)notification {
-    // Kiedy otwarte jest menu ukryte, ignorujemy rotację, żeby nie psuć widoku
+    // Blokada rotacji podczas otwartego menu, aby uniknąć błędów layoutu
     if (fullScreenMenuWindow) {
         return;
     }
