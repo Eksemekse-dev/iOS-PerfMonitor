@@ -1,7 +1,10 @@
 #import <UIKit/UIKit.h>
 #import <mach/mach.h>
 #import <sys/sysctl.h>
+#import <sys/types.h>
+#include <unistd.h>
 
+// --- FLOATING PERFORMANCE MONITOR (PiP) ---
 @interface PerfMonitorView : UIView
 @property (nonatomic, strong) UILabel *infoLabel;
 @property (nonatomic, strong) NSTimer *timer;
@@ -92,14 +95,115 @@
 }
 @end
 
+// --- MODERN FULL-SCREEN DIAGNOSTIC MENU ---
+@interface PerfFullScreenMenuView : UIView
+@property (nonatomic, copy) void (^onClose)(void);
+@property (nonatomic, copy) void (^onRunTest)(void);
+@end
+
+@implementation PerfFullScreenMenuView
+
+- (instancetype)initWithFrame:(CGRect)frame {
+    if (self = [super initWithFrame:frame]) {
+        // Modern iOS Blur Effect background
+        UIBlurEffect *blurEffect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleDark];
+        UIVisualEffectView *blurView = [[UIVisualEffectView alloc] initWithEffect:blurEffect];
+        blurView.frame = self.bounds;
+        blurView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        [self addSubview:blurView];
+
+        // Main card panel container
+        UIView *cardView = [[UIView alloc] initWithFrame:CGRectMake(30, 60, frame.size.width - 60, frame.size.height - 120)];
+        cardView.center = CGPointMake(frame.size.width / 2.0, frame.size.height / 2.0);
+        cardView.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin | UIViewAutoresizingFlexibleRightMargin | UIViewAutoresizingFlexibleTopMargin | UIViewAutoresizingFlexibleBottomMargin;
+        cardView.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.65];
+        cardView.layer.cornerRadius = 24;
+        cardView.layer.borderWidth = 1.0;
+        cardView.layer.borderColor = [[UIColor whiteColor] colorWithAlphaComponent:0.2].CGColor;
+        [self addSubview:cardView];
+
+        // Title Label
+        UILabel *titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, 20, cardView.frame.size.width - 40, 30)];
+        titleLabel.text = @"⚡ PerfMonitor Dashboard";
+        titleLabel.textColor = [UIColor whiteColor];
+        titleLabel.font = [UIFont systemFontOfSize:20 weight:UIFontWeightBold];
+        titleLabel.textAlignment = NSTextAlignmentCenter;
+        [cardView addSubview:titleLabel];
+
+        // Fetch system info and debugger state
+        struct kinfo_proc info;
+        memset(&info, 0, sizeof(info));
+        int mib[4] = { CTL_KERN, KERN_PROC, KERN_PROC_PID, getpid() };
+        size_t size = sizeof(info);
+        BOOL debuggerAttached = NO;
+        if (sysctl(mib, 4, &info, &size, NULL, 0) == 0) {
+            debuggerAttached = (info.p_flag & P_TRACED) != 0;
+        }
+
+        struct task_basic_info taskInfo;
+        mach_msg_type_number_t tSize = TASK_BASIC_INFO_COUNT;
+        task_info(mach_task_self(), TASK_BASIC_INFO, (task_info_t)&taskInfo, &tSize);
+        double appRamMB = taskInfo.resident_size / (1024.0 * 1024.0);
+        unsigned long long totalDeviceRam = [[NSProcessInfo processInfo] physicalMemory] / (1024 * 1024);
+        NSString *bundleId = [[NSBundle mainBundle] bundleIdentifier] ?: @"Unknown";
+        NSString *iosVersion = [[UIDevice currentDevice] systemVersion];
+
+        // Specification TextView
+        UITextView *textView = [[UITextView alloc] initWithFrame:CGRectMake(20, 70, cardView.frame.size.width - 40, cardView.frame.size.height - 160)];
+        textView.backgroundColor = [UIColor clearColor];
+        textView.textColor = [UIColor whiteColor];
+        textView.font = [UIFont fontWithName:@"Courier" size:13] ?: [UIFont systemFontOfSize:13];
+        textView.editable = NO;
+        textView.text = [NSString stringWithFormat:
+                         @"📱 iOS Version: %@\n"
+                         @"📦 Bundle ID: %@\n"
+                         @"🔍 Debugger Attached: %@\n"
+                         @"🧠 Memory+ Kernel: Active\n"
+                         @"📊 App RAM Usage: %.1f MB\n"
+                         @"💾 Total Device RAM: %llu MB",
+                         iosVersion, bundleId, debuggerAttached ? @"YES (Connected)" : @"NO (Clean)", appRamMB, totalDeviceRam];
+        [cardView addSubview:textView];
+
+        // RAM Stress Test Button
+        UIButton *testButton = [UIButton buttonWithType:UIButtonTypeSystem];
+        testButton.frame = CGRectMake(20, cardView.frame.size.height - 75, cardView.frame.size.width - 40, 44);
+        testButton.backgroundColor = [UIColor systemRedColor];
+        [testButton setTitle:@"Run RAM Stress Test (OOM)" forState:UIControlStateNormal];
+        [testButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+        testButton.titleLabel.font = [UIFont systemFontOfSize:15 weight:UIFontWeightBold];
+        testButton.layer.cornerRadius = 12;
+        [testButton addTarget:self action:@selector(runStressTestTapped) forControlEvents:UIControlEventTouchUpInside];
+        [cardView addSubview:testButton];
+
+        // Close Menu Button
+        UIButton *closeButton = [UIButton buttonWithType:UIButtonTypeSystem];
+        closeButton.frame = CGRectMake(cardView.frame.size.width - 45, 15, 30, 30);
+        [closeButton setTitle:@"✕" forState:UIControlStateNormal];
+        [closeButton setTitleColor:[UIColor lightGrayColor] forState:UIControlStateNormal];
+        closeButton.titleLabel.font = [UIFont systemFontOfSize:18 weight:UIFontWeightBold];
+        [closeButton addTarget:self action:@selector(closeTapped) forControlEvents:UIControlEventTouchUpInside];
+        [cardView addSubview:closeButton];
+    }
+    return self;
+}
+
+- (void)runStressTestTapped {
+    if (self.onRunTest) self.onRunTest();
+}
+
+- (void)closeTapped {
+    if (self.onClose) self.onClose();
+}
+
+@end
+
 static PerfMonitorWindow *sharedMonitorWindow = nil;
+static UIWindow *fullScreenMenuWindow = nil;
 
 @interface PerfMonitorManager : NSObject
 + (NSString *)getTestResultFilePath;
 + (void)runRamStressTest;
 + (void)checkPreviousCrashOrTestResult;
-+ (NSString *)getDeviceModelName;
-+ (BOOL)isJITActive;
 @end
 
 @implementation PerfMonitorManager
@@ -107,34 +211,12 @@ static PerfMonitorWindow *sharedMonitorWindow = nil;
 + (NSString *)getTestResultFilePath {
     NSString *bundleId = [[NSBundle mainBundle] bundleIdentifier] ?: @"unknown_app";
     NSArray *paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
-    NSString *documentsDirectory = [paths objectAtIndex:0];
-    return [documentsDirectory stringByAppendingPathComponent:[NSString stringWithFormat:@"%@_ram_test_state.plist", bundleId]];
-}
-
-+ (NSString *)getDeviceModelName {
-    size_t size;
-    sysctlbyname("hw.machine", NULL, &size, NULL, 0);
-    char *machine = malloc(size);
-    sysctlbyname("hw.machine", machine, &size, NULL, 0);
-    NSString *model = [NSString stringWithUTF8String:machine];
-    free(machine);
-    return model;
-}
-
-+ (BOOL)isJITActive {
-    void *addr = mmap(NULL, getpagesize(), PROT_READ | PROT_WRITE | PROT_EXEC, MAP_ANON | MAP_PRIVATE, -1, 0);
-    if (addr == MAP_FAILED) return NO;
-    munmap(addr, getpagesize());
-    return YES;
+    return [paths[0] stringByAppendingPathComponent:[NSString stringWithFormat:@"%@_ram_test_state.plist", bundleId]];
 }
 
 + (void)runRamStressTest {
     NSString *filePath = [self getTestResultFilePath];
-    
-    [@{
-        @"status": @"running",
-        @"allocatedMB": @(0)
-    } writeToFile:filePath atomically:YES];
+    [@{ @"status": @"running", @"allocatedMB": @(0) } writeToFile:filePath atomically:YES];
 
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
         NSMutableArray *chunks = [NSMutableArray array];
@@ -147,15 +229,9 @@ static PerfMonitorWindow *sharedMonitorWindow = nil;
                 if (!chunk) break;
                 memset(chunk, 1, chunkSizeMB * 1024 * 1024);
                 [chunks addObject:[NSData dataWithBytesNoCopy:chunk length:chunkSizeMB * 1024 * 1024 freeWhenDone:YES]];
-                
                 totalAllocatedMB += chunkSizeMB;
                 
-                NSDictionary *state = @{
-                    @"status": @"running",
-                    @"allocatedMB": @(totalAllocatedMB)
-                };
-                [state writeToFile:filePath atomically:YES];
-                
+                [@{ @"status": @"running", @"allocatedMB": @(totalAllocatedMB) } writeToFile:filePath atomically:YES];
                 usleep(50000);
             }
         }
@@ -176,35 +252,31 @@ static PerfMonitorWindow *sharedMonitorWindow = nil;
         [[NSFileManager defaultManager] removeItemAtPath:filePath error:nil];
         
         dispatch_async(dispatch_get_main_queue(), ^{
-            UIWindow *keyWindow = nil;
+            UIWindow *targetWindow = nil;
             for (UIWindowScene *scene in [UIApplication sharedApplication].connectedScenes) {
                 if ([scene isKindOfClass:[UIWindowScene class]]) {
-                    for (UIWindow *win in scene.windows) {
-                        if (win.isKeyWindow) {
-                            keyWindow = win;
-                            break;
-                        }
-                    }
+                    targetWindow = scene.windows.firstObject;
+                    if (targetWindow) break;
                 }
-                if (keyWindow) break;
             }
-            UIViewController *rootVC = keyWindow ? keyWindow.rootViewController : nil;
-            while (rootVC.presentedViewController) {
-                rootVC = rootVC.presentedViewController;
-            }
-            if (!rootVC) return;
+            if (!targetWindow) return;
 
             UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"RAM Test Result (Crash OOM)"
                                                                            message:[NSString stringWithFormat:@"App crashed due to Out Of Memory!\nMax allocated RAM before crash: %@ MB", allocatedMB]
                                                                     preferredStyle:UIAlertControllerStyleAlert];
             [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
-            [rootVC presentViewController:alert animated:YES completion:nil];
+            
+            UIViewController *tempVC = [[UIViewController alloc] init];
+            [targetWindow.rootViewController presentViewController:tempVC animated:NO completion:^{
+                [tempVC presentViewController:alert animated:YES completion:nil];
+            }];
         });
     }
 }
 
 @end
 
+// --- GESTURES & HANDLERS ---
 @interface PerfMonitorGestureHandler : NSObject
 @end
 
@@ -213,7 +285,6 @@ static PerfMonitorWindow *sharedMonitorWindow = nil;
 + (void)handleFourFingerTap:(UITapGestureRecognizer *)sender {
     if (sender.state == UIGestureRecognizerStateRecognized) {
         if (sharedMonitorWindow) {
-            // Stukanie 4 palcami przełącza widoczność małego PiP
             sharedMonitorWindow.hidden = !sharedMonitorWindow.hidden;
         }
     }
@@ -221,60 +292,51 @@ static PerfMonitorWindow *sharedMonitorWindow = nil;
 
 + (void)handleFourFingerLongPress:(UILongPressGestureRecognizer *)sender {
     if (sender.state == UIGestureRecognizerStateBegan) {
-        UIWindow *keyWindow = nil;
+        if (fullScreenMenuWindow) return; // Menu already open
+
+        UIWindowScene *targetScene = nil;
         for (UIWindowScene *scene in [UIApplication sharedApplication].connectedScenes) {
             if ([scene isKindOfClass:[UIWindowScene class]]) {
-                for (UIWindow *win in scene.windows) {
-                    if (win.isKeyWindow) {
-                        keyWindow = win;
-                        break;
-                    }
-                }
+                targetScene = scene;
+                break;
             }
-            if (keyWindow) break;
         }
+        if (!targetScene) return;
+
+        // Create a dedicated window for the full-screen modern menu
+        fullScreenMenuWindow = [[UIWindow alloc] initWithFrame:targetScene.coordinateSpace.bounds];
+        fullScreenMenuWindow.windowScene = targetScene;
+        fullScreenMenuWindow.windowLevel = UIWindowLevelAlert + 2000;
+        fullScreenMenuWindow.hidden = NO;
+
+        PerfFullScreenMenuView *menuView = [[PerfFullScreenMenuView alloc] initWithFrame:fullScreenMenuWindow.bounds];
         
-        UIViewController *rootVC = keyWindow ? keyWindow.rootViewController : nil;
-        while (rootVC.presentedViewController) {
-            rootVC = rootVC.presentedViewController;
-        }
-        if (!rootVC) return;
-
-        NSString *model = [PerfMonitorManager getDeviceModelName];
-        NSString *iosVersion = [[UIDevice currentDevice] systemVersion];
-        BOOL jitActive = [PerfMonitorManager isJITActive];
+        __weak typeof(fullScreenMenuWindow) weakMenuWin = fullScreenMenuWindow;
+        menuView.onClose = ^{
+            weakMenuWin.hidden = YES;
+            fullScreenMenuWindow = nil;
+        };
         
-        struct task_basic_info info;
-        mach_msg_type_number_t size = TASK_BASIC_INFO_COUNT;
-        task_info(mach_task_self(), TASK_BASIC_INFO, (task_info_t)&info, &size);
-        double appRamMB = info.resident_size / (1024.0 * 1024.0);
-        unsigned long long totalDeviceRam = [[NSProcessInfo processInfo] physicalMemory] / (1024 * 1024);
-        NSString *bundleId = [[NSBundle mainBundle] bundleIdentifier] ?: @"Unknown";
-
-        NSString *message = [NSString stringWithFormat:
-                             @"Model: %@\niOS: %@\nBundle ID: %@\nJIT Active: %@\nMemory+: Enabled (Mach)\nApp RAM: %.1f MB\nTotal Device RAM: %llu MB",
-                             model, iosVersion, bundleId, jitActive ? @"YES" : @"NO", appRamMB, totalDeviceRam];
-
-        UIAlertController *menu = [UIAlertController alertControllerWithTitle:@"iOS PerfMonitor Menu"
-                                                                       message:message
-                                                                preferredStyle:UIAlertControllerStyleAlert];
-
-        [menu addAction:[UIAlertAction actionWithTitle:@"Run RAM Stress Test (OOM)"
-                                                 style:UIAlertActionStyleDestructive
-                                               handler:^(UIAlertAction * _Nonnull action) {
+        menuView.onRunTest = ^{
             UIAlertController *confirm = [UIAlertController alertControllerWithTitle:@"Warning"
                                                                              message:@"This test will allocate RAM until the app crashes to measure limits. Continue?"
                                                                       preferredStyle:UIAlertControllerStyleAlert];
             [confirm addAction:[UIAlertAction actionWithTitle:@"Start" style:UIAlertActionStyleDestructive handler:^(UIAlertAction * _Nonnull act) {
+                if (weakMenuWin) {
+                    weakMenuWin.hidden = YES;
+                    fullScreenMenuWindow = nil;
+                }
                 [PerfMonitorManager runRamStressTest];
             }]];
             [confirm addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
-            [rootVC presentViewController:confirm animated:YES completion:nil];
-        }]];
+            
+            UIViewController *vc = [[UIViewController alloc] init];
+            weakMenuWin.rootViewController = vc;
+            [vc presentViewController:confirm animated:YES completion:nil];
+        };
 
-        [menu addAction:[UIAlertAction actionWithTitle:@"Close" style:UIAlertActionStyleCancel handler:nil]];
-
-        [rootVC presentViewController:menu animated:YES completion:nil];
+        fullScreenMenuWindow.rootViewController = [[UIViewController alloc] init];
+        [fullScreenMenuWindow.rootViewController.view addSubview:menuView];
     }
 }
 
@@ -282,6 +344,9 @@ static PerfMonitorWindow *sharedMonitorWindow = nil;
     if (sharedMonitorWindow && !sharedMonitorWindow.isHidden) {
         CGSize screenSize = [UIScreen mainScreen].bounds.size;
         sharedMonitorWindow.center = CGPointMake(screenSize.width / 2.0, 90.0);
+    }
+    if (fullScreenMenuWindow) {
+        fullScreenMenuWindow.frame = [UIScreen mainScreen].bounds;
     }
 }
 
@@ -292,22 +357,8 @@ __attribute__((constructor)) static void tweakEntry() {
         UIWindow *targetWindow = nil;
         for (UIWindowScene *scene in [UIApplication sharedApplication].connectedScenes) {
             if ([scene isKindOfClass:[UIWindowScene class]]) {
-                for (UIWindow *win in scene.windows) {
-                    if (win.isKeyWindow) {
-                        targetWindow = win;
-                        break;
-                    }
-                }
-            }
-            if (targetWindow) break;
-        }
-        
-        if (!targetWindow) {
-            for (UIWindowScene *scene in [UIApplication sharedApplication].connectedScenes) {
-                if ([scene isKindOfClass:[UIWindowScene class]]) {
-                    targetWindow = scene.windows.firstObject;
-                    if (targetWindow) break;
-                }
+                targetWindow = scene.windows.firstObject;
+                if (targetWindow) break;
             }
         }
 
@@ -316,7 +367,7 @@ __attribute__((constructor)) static void tweakEntry() {
             sharedMonitorWindow = [[PerfMonitorWindow alloc] initWithFrame:CGRectMake(0, 0, 140, 70)];
             sharedMonitorWindow.center = CGPointMake(screenSize.width / 2.0, 90.0);
             sharedMonitorWindow.windowLevel = UIWindowLevelAlert + 1000;
-            sharedMonitorWindow.hidden = YES; // Ukryte domyślnie
+            sharedMonitorWindow.hidden = YES; // Hidden by default
             
             if (@available(iOS 13.0, *)) {
                 for (UIWindowScene *scene in [UIApplication sharedApplication].connectedScenes) {
@@ -330,12 +381,12 @@ __attribute__((constructor)) static void tweakEntry() {
             PerfMonitorView *monitorView = [[PerfMonitorView alloc] initWithFrame:sharedMonitorWindow.bounds];
             [sharedMonitorWindow addSubview:monitorView];
             
-            // Pojedyncze stuknięcie 4 palcami -> włącza/wyłącza widok PiP
+            // 4-finger single tap -> PiP visibility toggle
             UITapGestureRecognizer *fourFingerTap = [[UITapGestureRecognizer alloc] initWithTarget:[PerfMonitorGestureHandler class] action:@selector(handleFourFingerTap:)];
             fourFingerTap.numberOfTouchesRequired = 4;
             [targetWindow addGestureRecognizer:fourFingerTap];
 
-            // Przytrzymanie 4 palcami przez 2 sekundy -> otwiera ukryte menu diagnostyczne
+            // 4-finger long press (2s) -> Opens modern full-screen menu
             UILongPressGestureRecognizer *fourFingerLongPress = [[UILongPressGestureRecognizer alloc] initWithTarget:[PerfMonitorGestureHandler class] action:@selector(handleFourFingerLongPress:)];
             fourFingerLongPress.numberOfTouchesRequired = 4;
             fourFingerLongPress.minimumPressDuration = 2.0;
