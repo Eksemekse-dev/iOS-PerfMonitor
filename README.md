@@ -50,6 +50,9 @@ Download the latest compiled binary (`.dylib`) file from the repository Releases
 ### Step 5
 ![Step 5 Setup](help/5.heic)
 
+### Step 6
+Ready to go! Launch your application and enjoy full diagnostic capabilities.
+
 ---
 
 ## Technical Architecture
