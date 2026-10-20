@@ -148,6 +148,14 @@
         [closeButton addTarget:self action:@selector(closeTapped) forControlEvents:UIControlEventTouchUpInside];
         [cardView addSubview:closeButton];
 
+        // Pobieranie modelu urządzenia przez sysctl (np. iPhone14,2)
+        size_t modelSize;
+        sysctlbyname("hw.machine", NULL, &modelSize, NULL, 0);
+        char *machine = malloc(modelSize);
+        sysctlbyname("hw.machine", machine, &modelSize, NULL, 0);
+        NSString *deviceModel = [NSString stringWithUTF8String:machine];
+        free(machine);
+
         // System info retrieval
         int mib[4] = { CTL_KERN, KERN_PROC, KERN_PROC_PID, getpid() };
         struct kinfo_proc info;
@@ -168,20 +176,22 @@
         self.shareSummaryText = [NSString stringWithFormat:
                                  @"📊 PerfMonitor Diagnostics\n"
                                  @"------------------------\n"
+                                 @"Device Model: %@\n"
                                  @"iOS Version: %@\n"
                                  @"Bundle ID: %@\n"
                                  @"Debugger Attached: %@\n"
                                  @"Memory+ Kernel: Active\n"
                                  @"App RAM Usage: %.1f MB\n"
                                  @"Total Device RAM: %llu MB",
-                                 iosVersion, bundleId, debuggerAttached ? @"Yes" : @"No", appRamMB, totalDeviceRam];
+                                 deviceModel, iosVersion, bundleId, debuggerAttached ? @"Yes" : @"No", appRamMB, totalDeviceRam];
 
         UIScrollView *scrollView = [[UIScrollView alloc] initWithFrame:CGRectMake(20, 70, cardView.frame.size.width - 40, cardView.frame.size.height - 145)];
         scrollView.showsVerticalScrollIndicator = NO;
         [cardView addSubview:scrollView];
 
         NSArray *items = @[
-            @{@"icon": @"iphone", @"title": @"iOS Version", @"value": iosVersion},
+            @{@"icon": @"iphone", @"title": @"Device Model", @"value": deviceModel},
+            @{@"icon": @"gearshape", @"title": @"iOS Version", @"value": iosVersion},
             @{@"icon": @"app.badge", @"title": @"Bundle ID", @"value": bundleId},
             @{@"icon": @"ladybug", @"title": @"Debugger Attached", @"value": debuggerAttached ? @"Yes (Connected)" : @"No (Clean)"},
             @{@"icon": @"cpu", @"title": @"Memory+ Kernel", @"value": @"Active"},
@@ -216,7 +226,7 @@
             valLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightBold];
             valLabel.textAlignment = NSTextAlignmentRight;
             valLabel.userInteractionEnabled = NO;
-            valLabel.tag = 999; // Tag do łatwego kopiowania wartości
+            valLabel.tag = 999;
             [rowButton addSubview:valLabel];
 
             [rowButton addTarget:self action:@selector(copyRowValue:) forControlEvents:UIControlEventTouchUpInside];
@@ -438,7 +448,6 @@ static UIWindow *fullScreenMenuWindow = nil;
 }
 
 + (void)handleOrientationChange:(NSNotification *)notification {
-    // Blokada rotacji podczas otwartego menu, aby uniknąć błędów layoutu
     if (fullScreenMenuWindow) {
         return;
     }
