@@ -4,7 +4,7 @@
 #import <sys/types.h>
 #include <unistd.h>
 
-// --- TUTORIAL OVERVIEW WITH SKIP BUTTON & TOUCH TRACKING ---
+// --- TUTORIAL OVERVIEW WITH AUTO-DISMISS ON 4 FINGERS & SKIP ---
 @interface PerfTutorialView : UIView
 @property (nonatomic, copy) void (^onCompleted)(void);
 - (void)clearDots;
@@ -14,12 +14,14 @@
     UILabel *_headerInstructionLabel;
     UILabel *_stepSubtitleLabel;
     UIButton *_skipButton;
+    BOOL _isTriggered;
 }
 
 - (instancetype)initWithFrame:(CGRect)frame {
     if (self = [super initWithFrame:frame]) {
         self.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.85];
         self.multipleTouchEnabled = YES;
+        _isTriggered = NO;
 
         UIEdgeInsets safeInsets = UIEdgeInsetsZero;
         if (@available(iOS 11.0, *)) {
@@ -39,14 +41,14 @@
         _headerInstructionLabel.layer.masksToBounds = YES;
         _headerInstructionLabel.layer.borderWidth = 1.0;
         _headerInstructionLabel.layer.borderColor = [[UIColor whiteColor] colorWithAlphaComponent:0.2].CGColor;
-        _headerInstructionLabel.text = @"4-Finger Tap = PiP | Hold = Dashboard";
+        _headerInstructionLabel.text = @"Place 4 fingers: Tap = PiP | Hold = Menu";
         [self addSubview:_headerInstructionLabel];
 
         _stepSubtitleLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, topY + 44, frame.size.width - 40, 20)];
         _stepSubtitleLabel.textColor = [UIColor systemCyanColor];
         _stepSubtitleLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightSemibold];
         _stepSubtitleLabel.textAlignment = NSTextAlignmentCenter;
-        _stepSubtitleLabel.text = @"Place 4 fingers anywhere to test or press Skip";
+        _stepSubtitleLabel.text = @"Or press Skip below";
         [self addSubview:_stepSubtitleLabel];
 
         // Przycisk Skip
@@ -79,7 +81,7 @@
     }
 }
 
-// --- SAFE TOUCH TRACKING ---
+// --- SAFE TOUCH TRACKING & AUTO-TRIGGER ---
 - (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
     [self renderTouchesFromEvent:event];
 }
@@ -100,7 +102,7 @@
     [self clearDots];
     NSSet<UITouch *> *allTouches = event.allTouches;
     
-    BOOL isFourFingers = (allTouches.count == 4);
+    BOOL isFourFingers = (allTouches.count >= 4);
     UIColor *dotColor = isFourFingers ? [UIColor systemGreenColor] : [[UIColor systemCyanColor] colorWithAlphaComponent:0.8];
     
     for (UITouch *touch in allTouches) {
@@ -116,6 +118,27 @@
             dot.userInteractionEnabled = NO;
             [self addSubview:dot];
         }
+    }
+
+    // Jeśli wykryto 4 palce, zmieniamy baner na zielony i po 1 sekundzie zamykamy poradnik
+    if (isFourFingers && !_isTriggered) {
+        _isTriggered = YES;
+        
+        UIImpactFeedbackGenerator *feedback = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleMedium];
+        [feedback impactOccurred];
+
+        [UIView animateWithDuration:0.2 animations:^{
+            self->_headerInstructionLabel.backgroundColor = [[UIColor systemGreenColor] colorWithAlphaComponent:0.3];
+            self->_headerInstructionLabel.layer.borderColor = [UIColor systemGreenColor].CGColor;
+            self->_headerInstructionLabel.textColor = [UIColor systemGreenColor];
+            self->_headerInstructionLabel.text = @"Gesture detected! Launching...";
+        }];
+
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            if (self.onCompleted) {
+                self.onCompleted();
+            }
+        });
     }
 }
 
@@ -359,7 +382,7 @@
         [testButton addTarget:self action:@selector(runStressTestTapped) forControlEvents:UIControlEventTouchUpInside];
         [cardView addSubview:testButton];
 
-        // --- FOOTER: CREATED BY EKSEMEKSE-DEV WITH AI + GITHUB LINK ---
+        // --- FOOTER: CREATED BY EKSEMEKSE-DEV WITH AI + GITHUB LOGO ---
         UIView *footerView = [[UIView alloc] initWithFrame:CGRectMake(20, cardView.frame.size.height - 58, cardView.frame.size.width - 40, 46)];
         [cardView addSubview:footerView];
 
@@ -372,7 +395,8 @@
 
         UIButton *githubButton = [UIButton buttonWithType:UIButtonTypeSystem];
         githubButton.frame = CGRectMake(footerView.frame.size.width - 36, 5, 36, 36);
-        [githubButton setImage:[UIImage systemImageNamed:@"safari.fill"] forState:UIControlStateNormal];
+        // Użycie ikony powiązanej z repozytorium/GitHub (alternatywnie standardowa symboliczna grafika sieciowa)
+        [githubButton setImage:[UIImage systemImageNamed:@"network"] forState:UIControlStateNormal];
         githubButton.tintColor = [UIColor systemBlueColor];
         [githubButton addTarget:self action:@selector(openGithubTapped) forControlEvents:UIControlEventTouchUpInside];
         [footerView addSubview:githubButton];
@@ -464,7 +488,7 @@ static UIWindow *tutorialWindow = nil;
 
 + (NSString *)getTutorialStateFilePath {
     NSArray *paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
-    return [paths[0] stringByAppendingPathComponent:@"perf_monitor_tutorial_v6.flag"];
+    return [paths[0] stringByAppendingPathComponent:@"perf_monitor_tutorial_v7.flag"];
 }
 
 + (BOOL)hasCompletedTutorial {
@@ -549,7 +573,7 @@ static UIWindow *tutorialWindow = nil;
 
 + (void)dismissTutorialAndExecute:(void(^)(void))action {
     if (tutorialWindow) {
-        [UIView animateWithDuration:0.25 animations:^{
+        [UIView animateWithDuration:0.3 animations:^{
             tutorialWindow.alpha = 0.0;
         } completion:^(BOOL finished) {
             tutorialWindow.hidden = YES;
