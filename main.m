@@ -4,7 +4,7 @@
 #import <sys/types.h>
 #include <unistd.h>
 
-// --- TUTORIAL OVERVIEW WITH LARGE TOUCH DOTS & GESTURE EXPLANATION ---
+// --- TUTORIAL OVERVIEW WITH SKIP BUTTON & TOUCH TRACKING ---
 @interface PerfTutorialView : UIView
 @property (nonatomic, copy) void (^onCompleted)(void);
 - (void)clearDots;
@@ -13,6 +13,7 @@
 @implementation PerfTutorialView {
     UILabel *_headerInstructionLabel;
     UILabel *_stepSubtitleLabel;
+    UIButton *_skipButton;
 }
 
 - (instancetype)initWithFrame:(CGRect)frame {
@@ -28,7 +29,7 @@
 
         CGFloat topY = safeInsets.top > 0 ? safeInsets.top + 5 : 35;
 
-        // Instrukcja pod Dynamiczną Wyspą / Notchem
+        // Banner z instrukcją pod Dynamiczną Wyspą / Notchem
         _headerInstructionLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, topY, frame.size.width - 40, 38)];
         _headerInstructionLabel.backgroundColor = [[UIColor whiteColor] colorWithAlphaComponent:0.12];
         _headerInstructionLabel.textColor = [UIColor whiteColor];
@@ -45,10 +46,29 @@
         _stepSubtitleLabel.textColor = [UIColor systemCyanColor];
         _stepSubtitleLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightSemibold];
         _stepSubtitleLabel.textAlignment = NSTextAlignmentCenter;
-        _stepSubtitleLabel.text = @"Place 4 fingers anywhere to test";
+        _stepSubtitleLabel.text = @"Place 4 fingers anywhere to test or press Skip";
         [self addSubview:_stepSubtitleLabel];
+
+        // Przycisk Skip
+        _skipButton = [UIButton buttonWithType:UIButtonTypeSystem];
+        _skipButton.frame = CGRectMake((frame.size.width - 100) / 2.0, topY + 72, 100, 32);
+        _skipButton.backgroundColor = [[UIColor whiteColor] colorWithAlphaComponent:0.15];
+        [_skipButton setTitle:@"Skip" forState:UIControlStateNormal];
+        [_skipButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+        _skipButton.titleLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightBold];
+        _skipButton.layer.cornerRadius = 16;
+        _skipButton.layer.borderWidth = 1.0;
+        _skipButton.layer.borderColor = [[UIColor whiteColor] colorWithAlphaComponent:0.3].CGColor;
+        [_skipButton addTarget:self action:@selector(skipTapped) forControlEvents:UIControlEventTouchUpInside];
+        [self addSubview:_skipButton];
     }
     return self;
+}
+
+- (void)skipTapped {
+    if (self.onCompleted) {
+        self.onCompleted();
+    }
 }
 
 - (void)clearDots {
@@ -59,7 +79,7 @@
     }
 }
 
-// --- SAFE TOUCH TRACKING (WIĘKSZE KULKI) ---
+// --- SAFE TOUCH TRACKING ---
 - (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
     [self renderTouchesFromEvent:event];
 }
@@ -80,14 +100,12 @@
     [self clearDots];
     NSSet<UITouch *> *allTouches = event.allTouches;
     
-    // Jeśli są dokładnie 4 dotyki, zmieniamy kolor na zielony (wizualne potwierdzenie gestu)
     BOOL isFourFingers = (allTouches.count == 4);
     UIColor *dotColor = isFourFingers ? [UIColor systemGreenColor] : [[UIColor systemCyanColor] colorWithAlphaComponent:0.8];
     
     for (UITouch *touch in allTouches) {
         if (touch.phase == UITouchPhaseBegan || touch.phase == UITouchPhaseMoved || touch.phase == UITouchPhaseStationary) {
             CGPoint loc = [touch locationInView:self];
-            // Większe kulki (46x46 zamiast 36x36)
             UIView *dot = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 46, 46)];
             dot.center = loc;
             dot.tag = 7777;
@@ -280,7 +298,7 @@
                                  @"Total Device RAM: %llu MB",
                                  deviceModel, iosVersion, bundleId, debuggerAttached ? @"Yes" : @"No", appRamMB, totalDeviceRam];
 
-        UIScrollView *scrollView = [[UIScrollView alloc] initWithFrame:CGRectMake(20, 70, cardView.frame.size.width - 40, cardView.frame.size.height - 145)];
+        UIScrollView *scrollView = [[UIScrollView alloc] initWithFrame:CGRectMake(20, 65, cardView.frame.size.width - 40, cardView.frame.size.height - 185)];
         scrollView.showsVerticalScrollIndicator = NO;
         [cardView addSubview:scrollView];
 
@@ -330,17 +348,43 @@
         }
         scrollView.contentSize = CGSizeMake(scrollView.frame.size.width, yOffset);
 
+        // Przycisk Stress Test
         UIButton *testButton = [UIButton buttonWithType:UIButtonTypeSystem];
-        testButton.frame = CGRectMake(20, cardView.frame.size.height - 60, cardView.frame.size.width - 40, 44);
+        testButton.frame = CGRectMake(20, cardView.frame.size.height - 110, cardView.frame.size.width - 40, 42);
         testButton.backgroundColor = [UIColor systemRedColor];
         [testButton setTitle:@"Run RAM Stress Test (OOM)" forState:UIControlStateNormal];
         [testButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-        testButton.titleLabel.font = [UIFont systemFontOfSize:15 weight:UIFontWeightBold];
-        testButton.layer.cornerRadius = 14;
+        testButton.titleLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightBold];
+        testButton.layer.cornerRadius = 12;
         [testButton addTarget:self action:@selector(runStressTestTapped) forControlEvents:UIControlEventTouchUpInside];
         [cardView addSubview:testButton];
+
+        // --- FOOTER: CREATED BY EKSEMEKSE-DEV WITH AI + GITHUB LINK ---
+        UIView *footerView = [[UIView alloc] initWithFrame:CGRectMake(20, cardView.frame.size.height - 58, cardView.frame.size.width - 40, 46)];
+        [cardView addSubview:footerView];
+
+        UILabel *creditLabel = [[UILabel alloc] initWithFrame:CGRectMake(0, 0, footerView.frame.size.width - 40, 46)];
+        creditLabel.text = @"Created by Eksemekse-dev with AI";
+        creditLabel.textColor = [UIColor darkGrayColor];
+        creditLabel.font = [UIFont systemFontOfSize:11 weight:UIFontWeightMedium];
+        creditLabel.numberOfLines = 2;
+        [footerView addSubview:creditLabel];
+
+        UIButton *githubButton = [UIButton buttonWithType:UIButtonTypeSystem];
+        githubButton.frame = CGRectMake(footerView.frame.size.width - 36, 5, 36, 36);
+        [githubButton setImage:[UIImage systemImageNamed:@"safari.fill"] forState:UIControlStateNormal];
+        githubButton.tintColor = [UIColor systemBlueColor];
+        [githubButton addTarget:self action:@selector(openGithubTapped) forControlEvents:UIControlEventTouchUpInside];
+        [footerView addSubview:githubButton];
     }
     return self;
+}
+
+- (void)openGithubTapped {
+    NSURL *url = [NSURL URLWithString:@"https://github.com/Eksemekse-dev/iOS-PerfMonitor"];
+    if ([[UIApplication sharedApplication] canOpenURL:url]) {
+        [[UIApplication sharedApplication] openURL:url options:@{} completionHandler:nil];
+    }
 }
 
 - (void)copyRowValue:(UIButton *)sender {
@@ -420,7 +464,7 @@ static UIWindow *tutorialWindow = nil;
 
 + (NSString *)getTutorialStateFilePath {
     NSArray *paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
-    return [paths[0] stringByAppendingPathComponent:@"perf_monitor_tutorial_v5.flag"];
+    return [paths[0] stringByAppendingPathComponent:@"perf_monitor_tutorial_v6.flag"];
 }
 
 + (BOOL)hasCompletedTutorial {
@@ -498,88 +542,84 @@ static UIWindow *tutorialWindow = nil;
 + (void)handleFourFingerTap:(UITapGestureRecognizer *)sender;
 + (void)handleFourFingerLongPress:(UILongPressGestureRecognizer *)sender;
 + (void)handleOrientationChange:(NSNotification *)notification;
++ (void)dismissTutorialAndExecute:(void(^)(void))action;
 @end
 
 @implementation PerfMonitorGestureHandler
 
++ (void)dismissTutorialAndExecute:(void(^)(void))action {
+    if (tutorialWindow) {
+        [UIView animateWithDuration:0.25 animations:^{
+            tutorialWindow.alpha = 0.0;
+        } completion:^(BOOL finished) {
+            tutorialWindow.hidden = YES;
+            tutorialWindow = nil;
+            [PerfMonitorManager setTutorialCompleted];
+            if (action) action();
+        }];
+    } else {
+        if (action) action();
+    }
+}
+
 + (void)handleFourFingerTap:(UITapGestureRecognizer *)sender {
     if (sender.state == UIGestureRecognizerStateRecognized) {
-        if (tutorialWindow) {
-            // Zamknięcie poradnika po udanym gestem PiP
-            [UIView animateWithDuration:0.3 animations:^{
-                tutorialWindow.alpha = 0.0;
-            } completion:^(BOOL finished) {
-                tutorialWindow.hidden = YES;
-                tutorialWindow = nil;
-                [PerfMonitorManager setTutorialCompleted];
-            }];
-            return;
-        }
-
-        if (sharedMonitorWindow) {
-            sharedMonitorWindow.hidden = !sharedMonitorWindow.hidden;
-        }
+        [self dismissTutorialAndExecute:^{
+            if (sharedMonitorWindow) {
+                sharedMonitorWindow.hidden = !sharedMonitorWindow.hidden;
+            }
+        }];
     }
 }
 
 + (void)handleFourFingerLongPress:(UILongPressGestureRecognizer *)sender {
     if (sender.state == UIGestureRecognizerStateBegan) {
-        if (tutorialWindow) {
-            // Zamknięcie poradnika po udanym gestem Dashboardu
-            [UIView animateWithDuration:0.3 animations:^{
-                tutorialWindow.alpha = 0.0;
-            } completion:^(BOOL finished) {
-                tutorialWindow.hidden = YES;
-                tutorialWindow = nil;
-                [PerfMonitorManager setTutorialCompleted];
-            }];
-            return;
-        }
+        [self dismissTutorialAndExecute:^{
+            if (fullScreenMenuWindow) return;
 
-        if (fullScreenMenuWindow) return;
-
-        UIWindowScene *targetScene = nil;
-        for (UIWindowScene *scene in [UIApplication sharedApplication].connectedScenes) {
-            if ([scene isKindOfClass:[UIWindowScene class]]) {
-                targetScene = scene;
-                break;
-            }
-        }
-        if (!targetScene) return;
-
-        fullScreenMenuWindow = [[UIWindow alloc] initWithFrame:targetScene.coordinateSpace.bounds];
-        fullScreenMenuWindow.windowScene = targetScene;
-        fullScreenMenuWindow.windowLevel = UIWindowLevelAlert + 2000;
-        fullScreenMenuWindow.hidden = NO;
-
-        PerfFullScreenMenuView *menuView = [[PerfFullScreenMenuView alloc] initWithFrame:fullScreenMenuWindow.bounds];
-        
-        __block UIWindow *menuWinRef = fullScreenMenuWindow;
-        menuView.onClose = ^{
-            menuWinRef.hidden = YES;
-            fullScreenMenuWindow = nil;
-        };
-        
-        menuView.onRunTest = ^{
-            UIAlertController *confirm = [UIAlertController alertControllerWithTitle:@"Warning"
-                                                                             message:@"This test will allocate RAM until the app crashes to measure limits. Continue?"
-                                                                      preferredStyle:UIAlertControllerStyleAlert];
-            [confirm addAction:[UIAlertAction actionWithTitle:@"Start" style:UIAlertActionStyleDestructive handler:^(UIAlertAction * _Nonnull act) {
-                if (menuWinRef) {
-                    menuWinRef.hidden = YES;
-                    fullScreenMenuWindow = nil;
+            UIWindowScene *targetScene = nil;
+            for (UIWindowScene *scene in [UIApplication sharedApplication].connectedScenes) {
+                if ([scene isKindOfClass:[UIWindowScene class]]) {
+                    targetScene = scene;
+                    break;
                 }
-                [PerfMonitorManager runRamStressTest];
-            }]];
-            [confirm addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
-            
-            UIViewController *vc = [[UIViewController alloc] init];
-            menuWinRef.rootViewController = vc;
-            [vc presentViewController:confirm animated:YES completion:nil];
-        };
+            }
+            if (!targetScene) return;
 
-        fullScreenMenuWindow.rootViewController = [[UIViewController alloc] init];
-        [fullScreenMenuWindow.rootViewController.view addSubview:menuView];
+            fullScreenMenuWindow = [[UIWindow alloc] initWithFrame:targetScene.coordinateSpace.bounds];
+            fullScreenMenuWindow.windowScene = targetScene;
+            fullScreenMenuWindow.windowLevel = UIWindowLevelAlert + 2000;
+            fullScreenMenuWindow.hidden = NO;
+
+            PerfFullScreenMenuView *menuView = [[PerfFullScreenMenuView alloc] initWithFrame:fullScreenMenuWindow.bounds];
+            
+            __block UIWindow *menuWinRef = fullScreenMenuWindow;
+            menuView.onClose = ^{
+                menuWinRef.hidden = YES;
+                fullScreenMenuWindow = nil;
+            };
+            
+            menuView.onRunTest = ^{
+                UIAlertController *confirm = [UIAlertController alertControllerWithTitle:@"Warning"
+                                                                                 message:@"This test will allocate RAM until the app crashes to measure limits. Continue?"
+                                                                          preferredStyle:UIAlertControllerStyleAlert];
+                [confirm addAction:[UIAlertAction actionWithTitle:@"Start" style:UIAlertActionStyleDestructive handler:^(UIAlertAction * _Nonnull act) {
+                    if (menuWinRef) {
+                        menuWinRef.hidden = YES;
+                        fullScreenMenuWindow = nil;
+                    }
+                    [PerfMonitorManager runRamStressTest];
+                }]];
+                [confirm addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+                
+                UIViewController *vc = [[UIViewController alloc] init];
+                menuWinRef.rootViewController = vc;
+                [vc presentViewController:confirm animated:YES completion:nil];
+            };
+
+            fullScreenMenuWindow.rootViewController = [[UIViewController alloc] init];
+            [fullScreenMenuWindow.rootViewController.view addSubview:menuView];
+        }];
     }
 }
 
@@ -657,6 +697,9 @@ __attribute__((constructor)) static void tweakEntry() {
                     tutorialWindow.hidden = NO;
                     
                     PerfTutorialView *tutorialView = [[PerfTutorialView alloc] initWithFrame:tutorialWindow.bounds];
+                    tutorialView.onCompleted = ^{
+                        [PerfMonitorGestureHandler dismissTutorialAndExecute:nil];
+                    };
                     tutorialWindow.rootViewController = [[UIViewController alloc] init];
                     [tutorialWindow.rootViewController.view addSubview:tutorialView];
                 }
