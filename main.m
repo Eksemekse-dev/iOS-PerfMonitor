@@ -4,6 +4,85 @@
 #import <sys/types.h>
 #include <unistd.h>
 
+// --- FORWARD DECLARATIONS ---
+@interface PerfMonitorGestureHandler : NSObject
++ (void)handleFourFingerTap:(UITapGestureRecognizer *)sender;
++ (void)handleFourFingerLongPress:(UILongPressGestureRecognizer *)sender;
+@end
+
+// --- FIRST-LAUNCH TUTORIAL OVERLAY ---
+@interface PerfTutorialView : UIView
+@property (nonatomic, copy) void (^onCompleted)(void);
+@end
+
+@implementation PerfTutorialView {
+    int _currentStep;
+    UILabel *_instructionLabel;
+    UILabel *_stepCounterLabel;
+    UIView *_gestureIndicator;
+}
+
+- (instancetype)initWithFrame:(CGRect)frame {
+    if (self = [super initWithFrame:frame]) {
+        self.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.95];
+        _currentStep = 1;
+
+        UILabel *titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, 80, frame.size.width - 40, 40)];
+        titleLabel.text = @"Quick Setup Guide";
+        titleLabel.textColor = [UIColor whiteColor];
+        titleLabel.font = [UIFont systemFontOfSize:24 weight:UIFontWeightBold];
+        titleLabel.textAlignment = NSTextAlignmentCenter;
+        [self addSubview:titleLabel];
+
+        _stepCounterLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, 120, frame.size.width - 40, 24)];
+        _stepCounterLabel.textColor = [UIColor systemCyanColor];
+        _stepCounterLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightSemibold];
+        _stepCounterLabel.textAlignment = NSTextAlignmentCenter;
+        [self addSubview:_stepCounterLabel];
+
+        _instructionLabel = [[UILabel alloc] initWithFrame:CGRectMake(40, frame.size.height / 2.0 - 60, frame.size.width - 80, 100)];
+        _instructionLabel.textColor = [UIColor lightGrayColor];
+        _instructionLabel.font = [UIFont systemFontOfSize:16 weight:UIFontWeightMedium];
+        _instructionLabel.textAlignment = NSTextAlignmentCenter;
+        _instructionLabel.numberOfLines = 0;
+        [self addSubview:_instructionLabel];
+
+        // 4 kropki reprezentujące 4 palce
+        _gestureIndicator = [[UIView alloc] initWithFrame:CGRectMake((frame.size.width - 160) / 2.0, frame.size.height / 2.0 + 50, 160, 40)];
+        for (int i = 0; i < 4; i++) {
+            UIView *dot = [[UIView alloc] initWithFrame:CGRectMake(i * 45, 10, 20, 20)];
+            dot.backgroundColor = [UIColor systemCyanColor];
+            dot.layer.cornerRadius = 10;
+            [_gestureIndicator addSubview:dot];
+        }
+        [self addSubview:_gestureIndicator];
+
+        [self updateStepContent];
+    }
+    return self;
+}
+
+- (void)updateStepContent {
+    if (_currentStep == 1) {
+        _stepCounterLabel.text = @"STEP 1 OF 2";
+        _instructionLabel.text = @"Use a 4-finger single tap to toggle the floating performance monitor (PiP). Try it now!";
+    } else if (_currentStep == 2) {
+        _stepCounterLabel.text = @"STEP 2 OF 2";
+        _instructionLabel.text = @"Use a 4-finger long press (2 seconds) to open the full diagnostic dashboard. Try it now!";
+    }
+}
+
+-hicontinueToNextStep {
+    _currentStep++;
+    if (_currentStep > 2) {
+        if (self.onCompleted) self.onCompleted();
+    } else {
+        [self updateStepContent];
+    }
+}
+
+@end
+
 // --- FLOATING PERFORMANCE MONITOR (PiP) ---
 @interface PerfMonitorView : UIView
 @property (nonatomic, strong) UILabel *infoLabel;
@@ -132,7 +211,6 @@
         titleLabel.font = [UIFont systemFontOfSize:17 weight:UIFontWeightBold];
         [cardView addSubview:titleLabel];
 
-        // Share Button
         UIButton *shareButton = [UIButton buttonWithType:UIButtonTypeSystem];
         shareButton.frame = CGRectMake(cardView.frame.size.width - 80, 20, 30, 30);
         [shareButton setImage:[UIImage systemImageNamed:@"square.and.arrow.up"] forState:UIControlStateNormal];
@@ -140,7 +218,6 @@
         [shareButton addTarget:self action:@selector(shareTapped) forControlEvents:UIControlEventTouchUpInside];
         [cardView addSubview:shareButton];
 
-        // Close Button
         UIButton *closeButton = [UIButton buttonWithType:UIButtonTypeSystem];
         closeButton.frame = CGRectMake(cardView.frame.size.width - 42, 20, 30, 30);
         [closeButton setImage:[UIImage systemImageNamed:@"xmark.circle.fill"] forState:UIControlStateNormal];
@@ -148,7 +225,6 @@
         [closeButton addTarget:self action:@selector(closeTapped) forControlEvents:UIControlEventTouchUpInside];
         [cardView addSubview:closeButton];
 
-        // Pobieranie modelu urządzenia przez sysctl (np. iPhone14,2)
         size_t modelSize;
         sysctlbyname("hw.machine", NULL, &modelSize, NULL, 0);
         char *machine = malloc(modelSize);
@@ -156,7 +232,6 @@
         NSString *deviceModel = [NSString stringWithUTF8String:machine];
         free(machine);
 
-        // System info retrieval
         int mib[4] = { CTL_KERN, KERN_PROC, KERN_PROC_PID, getpid() };
         struct kinfo_proc info;
         size_t size = sizeof(info);
@@ -254,7 +329,6 @@
             UILabel *valLabel = (UILabel *)subview;
             if (valLabel.text) {
                 [UIPasteboard generalPasteboard].string = valLabel.text;
-
                 UIImpactFeedbackGenerator *generator = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleLight];
                 [generator impactOccurred];
 
@@ -287,7 +361,6 @@
 - (void)shareTapped {
     if (!self.shareSummaryText) return;
     UIActivityViewController *activityVC = [[UIActivityViewController alloc] initWithActivityItems:@[self.shareSummaryText] applicationActivities:nil];
-    
     UIWindow *keyWindow = self.window;
     UIViewController *rootVC = keyWindow.rootViewController;
     if (rootVC) {
@@ -307,11 +380,14 @@
 
 static PerfMonitorWindow *sharedMonitorWindow = nil;
 static UIWindow *fullScreenMenuWindow = nil;
+static UIWindow *tutorialWindow = nil;
 
 @interface PerfMonitorManager : NSObject
 + (NSString *)getTestResultFilePath;
 + (void)runRamStressTest;
 + (void)checkPreviousCrashOrTestResult;
++ (BOOL)hasCompletedTutorial;
++ (void)setTutorialCompleted;
 @end
 
 @implementation PerfMonitorManager
@@ -320,6 +396,19 @@ static UIWindow *fullScreenMenuWindow = nil;
     NSString *bundleId = [[NSBundle mainBundle] bundleIdentifier] ?: @"unknown_app";
     NSArray *paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
     return [paths[0] stringByAppendingPathComponent:[NSString stringWithFormat:@"%@_ram_test_state.plist", bundleId]];
+}
+
++ (NSString *)getTutorialStateFilePath {
+    NSArray *paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
+    return [paths[0] stringByAppendingPathComponent:@"perf_monitor_tutorial_v1.flag"];
+}
+
++ (BOOL)hasCompletedTutorial {
+    return [[NSFileManager defaultManager] fileExistsAtPath:[self getTutorialStateFilePath]];
+}
+
++ (void)setTutorialCompleted {
+    [@"completed" writeToFile:[self getTutorialStateFilePath] atomically:YES encoding:NSUTF8StringEncoding error:nil];
 }
 
 + (void)runRamStressTest {
@@ -392,6 +481,18 @@ static UIWindow *fullScreenMenuWindow = nil;
 
 + (void)handleFourFingerTap:(UITapGestureRecognizer *)sender {
     if (sender.state == UIGestureRecognizerStateRecognized) {
+        if (tutorialWindow) {
+            // Krok 1 tutorialu zaliczony przez stuknięcie
+            [UIView animateWithDuration:0.3 animations:^{
+                tutorialWindow.alpha = 0.0;
+            } completion:^(BOOL finished) {
+                tutorialWindow.hidden = YES;
+                tutorialWindow = nil;
+                [PerfMonitorManager setTutorialCompleted];
+            }];
+            return;
+        }
+
         if (sharedMonitorWindow) {
             sharedMonitorWindow.hidden = !sharedMonitorWindow.hidden;
         }
@@ -400,6 +501,18 @@ static UIWindow *fullScreenMenuWindow = nil;
 
 + (void)handleFourFingerLongPress:(UILongPressGestureRecognizer *)sender {
     if (sender.state == UIGestureRecognizerStateBegan) {
+        if (tutorialWindow) {
+            // Krok 2 tutorialu zaliczony przez przytrzymanie
+            [UIView animateWithDuration:0.3 animations:^{
+                tutorialWindow.alpha = 0.0;
+            } completion:^(BOOL finished) {
+                tutorialWindow.hidden = YES;
+                tutorialWindow = nil;
+                [PerfMonitorManager setTutorialCompleted];
+            }];
+            return;
+        }
+
         if (fullScreenMenuWindow) return;
 
         UIWindowScene *targetScene = nil;
@@ -448,7 +561,7 @@ static UIWindow *fullScreenMenuWindow = nil;
 }
 
 + (void)handleOrientationChange:(NSNotification *)notification {
-    if (fullScreenMenuWindow) {
+    if (fullScreenMenuWindow || tutorialWindow) {
         return;
     }
 
@@ -470,25 +583,30 @@ __attribute__((constructor)) static void tweakEntry() {
             }
         }
 
-        if (targetWindow && !sharedMonitorWindow) {
+        if (targetWindow) {
             CGSize screenSize = [UIScreen mainScreen].bounds.size;
-            sharedMonitorWindow = [[PerfMonitorWindow alloc] initWithFrame:CGRectMake(0, 0, 140, 70)];
-            sharedMonitorWindow.center = CGPointMake(screenSize.width / 2.0, 90.0);
-            sharedMonitorWindow.windowLevel = UIWindowLevelAlert + 1000;
-            sharedMonitorWindow.hidden = YES;
             
-            if (@available(iOS 13.0, *)) {
-                for (UIWindowScene *scene in [UIApplication sharedApplication].connectedScenes) {
-                    if ([scene isKindOfClass:[UIWindowScene class]]) {
-                        sharedMonitorWindow.windowScene = scene;
-                        break;
+            // Inicjalizacja głównego okna PiP monitora
+            if (!sharedMonitorWindow) {
+                sharedMonitorWindow = [[PerfMonitorWindow alloc] initWithFrame:CGRectMake(0, 0, 140, 70)];
+                sharedMonitorWindow.center = CGPointMake(screenSize.width / 2.0, 90.0);
+                sharedMonitorWindow.windowLevel = UIWindowLevelAlert + 1000;
+                sharedMonitorWindow.hidden = YES;
+                
+                if (@available(iOS 13.0, *)) {
+                    for (UIWindowScene *scene in [UIApplication sharedApplication].connectedScenes) {
+                        if ([scene isKindOfClass:[UIWindowScene class]]) {
+                            sharedMonitorWindow.windowScene = scene;
+                            break;
+                        }
                     }
                 }
+                
+                PerfMonitorView *monitorView = [[PerfMonitorView alloc] initWithFrame:sharedMonitorWindow.bounds];
+                [sharedMonitorWindow addSubview:monitorView];
             }
             
-            PerfMonitorView *monitorView = [[PerfMonitorView alloc] initWithFrame:sharedMonitorWindow.bounds];
-            [sharedMonitorWindow addSubview:monitorView];
-            
+            // Gesty dodawane do głównego okna aplikacji
             UITapGestureRecognizer *fourFingerTap = [[UITapGestureRecognizer alloc] initWithTarget:[PerfMonitorGestureHandler class] action:@selector(handleFourFingerTap:)];
             fourFingerTap.numberOfTouchesRequired = 4;
             [targetWindow addGestureRecognizer:fourFingerTap];
@@ -502,6 +620,27 @@ __attribute__((constructor)) static void tweakEntry() {
                                                      selector:@selector(handleOrientationChange:)
                                                          name:UIDeviceOrientationDidChangeNotification
                                                        object:nil];
+            
+            // Sprawdzenie czy użytkownik widział już poradnik
+            if (![PerfMonitorManager hasCompletedTutorial]) {
+                UIWindowScene *targetScene = nil;
+                for (UIWindowScene *scene in [UIApplication sharedApplication].connectedScenes) {
+                    if ([scene isKindOfClass:[UIWindowScene class]]) {
+                        targetScene = scene;
+                        break;
+                    }
+                }
+                if (targetScene) {
+                    tutorialWindow = [[UIWindow alloc] initWithFrame:targetScene.coordinateSpace.bounds];
+                    tutorialWindow.windowScene = targetScene;
+                    tutorialWindow.windowLevel = UIWindowLevelAlert + 3000;
+                    tutorialWindow.hidden = NO;
+                    
+                    PerfTutorialView *tutorialView = [[PerfTutorialView alloc] initWithFrame:tutorialWindow.bounds];
+                    tutorialWindow.rootViewController = [[UIViewController alloc] init];
+                    [tutorialWindow.rootViewController.view addSubview:tutorialView];
+                }
+            }
             
             [PerfMonitorManager checkPreviousCrashOrTestResult];
         }
