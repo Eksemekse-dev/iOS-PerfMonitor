@@ -4,15 +4,10 @@
 #import <sys/types.h>
 #include <unistd.h>
 
-// --- FORWARD DECLARATIONS ---
-@interface PerfMonitorGestureHandler : NSObject
-+ (void)handleFourFingerTap:(UITapGestureRecognizer *)sender;
-+ (void)handleFourFingerLongPress:(UILongPressGestureRecognizer *)sender;
-@end
-
 // --- FIRST-LAUNCH TUTORIAL OVERLAY ---
 @interface PerfTutorialView : UIView
 @property (nonatomic, copy) void (^onCompleted)(void);
+- (void)continueToNextStep;
 @end
 
 @implementation PerfTutorialView {
@@ -72,7 +67,7 @@
     }
 }
 
--hicontinueToNextStep {
+- (void)continueToNextStep {
     _currentStep++;
     if (_currentStep > 2) {
         if (self.onCompleted) self.onCompleted();
@@ -475,6 +470,9 @@ static UIWindow *tutorialWindow = nil;
 
 // --- GESTURES & HANDLERS ---
 @interface PerfMonitorGestureHandler : NSObject
++ (void)handleFourFingerTap:(UITapGestureRecognizer *)sender;
++ (void)handleFourFingerLongPress:(UILongPressGestureRecognizer *)sender;
++ (void)handleOrientationChange:(NSNotification *)notification;
 @end
 
 @implementation PerfMonitorGestureHandler
@@ -482,7 +480,6 @@ static UIWindow *tutorialWindow = nil;
 + (void)handleFourFingerTap:(UITapGestureRecognizer *)sender {
     if (sender.state == UIGestureRecognizerStateRecognized) {
         if (tutorialWindow) {
-            // Krok 1 tutorialu zaliczony przez stuknięcie
             [UIView animateWithDuration:0.3 animations:^{
                 tutorialWindow.alpha = 0.0;
             } completion:^(BOOL finished) {
@@ -502,7 +499,6 @@ static UIWindow *tutorialWindow = nil;
 + (void)handleFourFingerLongPress:(UILongPressGestureRecognizer *)sender {
     if (sender.state == UIGestureRecognizerStateBegan) {
         if (tutorialWindow) {
-            // Krok 2 tutorialu zaliczony przez przytrzymanie
             [UIView animateWithDuration:0.3 animations:^{
                 tutorialWindow.alpha = 0.0;
             } completion:^(BOOL finished) {
@@ -586,7 +582,6 @@ __attribute__((constructor)) static void tweakEntry() {
         if (targetWindow) {
             CGSize screenSize = [UIScreen mainScreen].bounds.size;
             
-            // Inicjalizacja głównego okna PiP monitora
             if (!sharedMonitorWindow) {
                 sharedMonitorWindow = [[PerfMonitorWindow alloc] initWithFrame:CGRectMake(0, 0, 140, 70)];
                 sharedMonitorWindow.center = CGPointMake(screenSize.width / 2.0, 90.0);
@@ -606,7 +601,6 @@ __attribute__((constructor)) static void tweakEntry() {
                 [sharedMonitorWindow addSubview:monitorView];
             }
             
-            // Gesty dodawane do głównego okna aplikacji
             UITapGestureRecognizer *fourFingerTap = [[UITapGestureRecognizer alloc] initWithTarget:[PerfMonitorGestureHandler class] action:@selector(handleFourFingerTap:)];
             fourFingerTap.numberOfTouchesRequired = 4;
             [targetWindow addGestureRecognizer:fourFingerTap];
@@ -621,7 +615,6 @@ __attribute__((constructor)) static void tweakEntry() {
                                                          name:UIDeviceOrientationDidChangeNotification
                                                        object:nil];
             
-            // Sprawdzenie czy użytkownik widział już poradnik
             if (![PerfMonitorManager hasCompletedTutorial]) {
                 UIWindowScene *targetScene = nil;
                 for (UIWindowScene *scene in [UIApplication sharedApplication].connectedScenes) {
