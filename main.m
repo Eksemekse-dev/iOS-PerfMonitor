@@ -4,17 +4,18 @@
 #import <sys/types.h>
 #include <unistd.h>
 
-// --- FIRST-LAUNCH TUTORIAL WITH TOUCH TRACKING & ISLAND HEADER ---
+// --- FIRST-LAUNCH TUTORIAL WITH SAFE TOUCH TRACKING ---
 @interface PerfTutorialView : UIView
 @property (nonatomic, copy) void (^onCompleted)(void);
 - (void)continueToNextStep;
+- (void)markStepAsVerifiedWithCompletion:(void (^)(void))completion;
 @end
 
 @implementation PerfTutorialView {
     int _currentStep;
     UILabel *_headerInstructionLabel;
     UILabel *_stepSubtitleLabel;
-    NSMutableDictionary<NSValue *, UIView *> *_touchDots;
+    NSMutableArray<UIView *> *_activeDots;
     BOOL _isStepVerified;
 }
 
@@ -22,7 +23,7 @@
     if (self = [super initWithFrame:frame]) {
         self.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.85];
         self.multipleTouchEnabled = YES;
-        _touchDots = [NSMutableDictionary dictionary];
+        _activeDots = [NSMutableArray array];
         _currentStep = 1;
         _isStepVerified = NO;
 
@@ -72,6 +73,13 @@
     }
 }
 
+- (void)clearDots {
+    for (UIView *dot in _activeDots) {
+        [dot removeFromSuperview];
+    }
+    [_activeDots removeAllObjects];
+}
+
 - (void)markStepAsVerifiedWithCompletion:(void (^)(void))completion {
     if (_isStepVerified) return;
     _isStepVerified = YES;
@@ -84,12 +92,13 @@
         self->_headerInstructionLabel.layer.borderColor = [UIColor systemGreenColor].CGColor;
         self->_headerInstructionLabel.textColor = [UIColor systemGreenColor];
 
-        for (UIView *dot in self->_touchDots.allValues) {
+        for (UIView *dot in self->_activeDots) {
             dot.backgroundColor = [UIColor systemGreenColor];
             dot.transform = CGAffineTransformMakeScale(1.4, 1.4);
         }
     } completion:^(BOOL finished) {
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.4 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            [self clearDots];
             if (completion) completion();
         });
     }];
@@ -106,48 +115,39 @@
     }];
 }
 
-// --- VISUAL TOUCH DOTS TRACKING ---
+// --- SAFE TOUCH TRACKING ---
 - (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
-    [self updateTouches:event.allTouches];
+    [self renderTouchesFromEvent:event];
 }
 
 - (void)touchesMoved:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
-    [self updateTouches:event.allTouches];
+    [self renderTouchesFromEvent:event];
 }
 
 - (void)touchesEnded:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
-    for (UITouch *touch in touches) {
-        NSValue *key = [NSValue valueWithPointer:(__bridge const void *)(touch)];
-        UIView *dot = _touchDots[key];
-        if (dot) {
-            [dot removeFromSuperview];
-            [_touchDots removeObjectForKey:key];
-        }
-    }
+    [self renderTouchesFromEvent:event];
 }
 
 - (void)touchesCancelled:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
-    [self touchesEnded:touches withEvent:event];
+    [self clearDots];
 }
 
-- (void)updateTouches:(NSSet<UITouch *> *)allTouches {
+- (void)renderTouchesFromEvent:(UIEvent *)event {
+    [self clearDots];
+    NSSet<UITouch *> *allTouches = event.allTouches;
+    
     for (UITouch *touch in allTouches) {
-        if (touch.phase == UITouchPhaseBegan || touch.phase == UITouchPhaseMoved) {
-            CGPoint location = [touch locationInView:self];
-            NSValue *key = [NSValue valueWithPointer:(__bridge const void *)(touch)];
-            UIView *dot = _touchDots[key];
-
-            if (!dot) {
-                dot = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 36, 36)];
-                dot.backgroundColor = _isStepVerified ? [UIColor systemGreenColor] : [[UIColor systemCyanColor] colorWithAlphaComponent:0.8];
-                dot.layer.cornerRadius = 18;
-                dot.layer.borderWidth = 2.0;
-                dot.layer.borderColor = [UIColor whiteColor].CGColor;
-                dot.userInteractionEnabled = NO;
-                [self addSubview:dot];
-                _touchDots[key] = dot;
-            }
-            dot.center = location;
+        if (touch.phase == UITouchPhaseBegan || touch.phase == UITouchPhaseMoved || touch.phase == UITouchPhaseStationary) {
+            CGPoint loc = [touch locationInView:self];
+            UIView *dot = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 36, 36)];
+            dot.center = loc;
+            dot.backgroundColor = _isStepVerified ? [UIColor systemGreenColor] : [[UIColor systemCyanColor] colorWithAlphaComponent:0.8];
+            dot.layer.cornerRadius = 18;
+            dot.layer.borderWidth = 2.0;
+            dot.layer.borderColor = [UIColor whiteColor].CGColor;
+            dot.userInteractionEnabled = NO;
+            [self addSubview:dot];
+            [_activeDots addObject:dot];
         }
     }
 }
@@ -471,7 +471,7 @@ static UIWindow *tutorialWindow = nil;
 
 + (NSString *)getTutorialStateFilePath {
     NSArray *paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
-    return [paths[0] stringByAppendingPathComponent:@"perf_monitor_tutorial_v2.flag"];
+    return [paths[0] stringByAppendingPathComponent:@"perf_monitor_tutorial_v3.flag"];
 }
 
 + (BOOL)hasCompletedTutorial {
