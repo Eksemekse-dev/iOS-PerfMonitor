@@ -4,7 +4,7 @@
 #import <sys/types.h>
 #include <unistd.h>
 
-// --- FIRST-LAUNCH TUTORIAL WITH SAFE TOUCH TRACKING ---
+// --- FIRST-LAUNCH TUTORIAL WITH BULLETPROOF TAG-BASED TOUCH TRACKING ---
 @interface PerfTutorialView : UIView
 @property (nonatomic, copy) void (^onCompleted)(void);
 - (void)continueToNextStep;
@@ -15,7 +15,6 @@
     int _currentStep;
     UILabel *_headerInstructionLabel;
     UILabel *_stepSubtitleLabel;
-    NSMutableDictionary<NSValue *, UIView *> *_touchToDotMap;
     BOOL _isStepVerified;
 }
 
@@ -23,7 +22,6 @@
     if (self = [super initWithFrame:frame]) {
         self.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.85];
         self.multipleTouchEnabled = YES;
-        _touchToDotMap = [NSMutableDictionary dictionary];
         _currentStep = 1;
         _isStepVerified = NO;
 
@@ -73,11 +71,12 @@
     }
 }
 
-- (void)clearAllDots {
-    for (UIView *dot in _touchToDotMap.allValues) {
-        [dot removeFromSuperview];
+- (void)clearDots {
+    for (UIView *subview in [self.subviews copy]) {
+        if (subview.tag == 7777) {
+            [subview removeFromSuperview];
+        }
     }
-    [_touchToDotMap removeAllObjects];
 }
 
 - (void)markStepAsVerifiedWithCompletion:(void (^)(void))completion {
@@ -92,13 +91,15 @@
         self->_headerInstructionLabel.layer.borderColor = [UIColor systemGreenColor].CGColor;
         self->_headerInstructionLabel.textColor = [UIColor systemGreenColor];
 
-        for (UIView *dot in self->_touchToDotMap.allValues) {
-            dot.backgroundColor = [UIColor systemGreenColor];
-            dot.transform = CGAffineTransformMakeScale(1.4, 1.4);
+        for (UIView *subview in self.subviews) {
+            if (subview.tag == 7777) {
+                subview.backgroundColor = [UIColor systemGreenColor];
+                subview.transform = CGAffineTransformMakeScale(1.4, 1.4);
+            }
         }
     } completion:^(BOOL finished) {
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.4 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            [self clearAllDots];
+            [self clearDots];
             if (completion) completion();
         });
     }];
@@ -115,47 +116,41 @@
     }];
 }
 
-// --- SAFE MULTI-TOUCH TRACKING ---
+// --- SAFE TOUCH TRACKING VIA TAGS ---
 - (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
-    for (UITouch *touch in touches) {
-        CGPoint loc = [touch locationInView:self];
-        UIView *dot = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 36, 36)];
-        dot.center = loc;
-        dot.backgroundColor = _isStepVerified ? [UIColor systemGreenColor] : [[UIColor systemCyanColor] colorWithAlphaComponent:0.8];
-        dot.layer.cornerRadius = 18;
-        dot.layer.borderWidth = 2.0;
-        dot.layer.borderColor = [UIColor whiteColor].CGColor;
-        dot.userInteractionEnabled = NO;
-        [self addSubview:dot];
-
-        NSValue *key = [NSValue valueWithNonretainedObject:touch];
-        _touchToDotMap[key] = dot;
-    }
+    [self renderTouchesFromEvent:event];
 }
 
 - (void)touchesMoved:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
-    for (UITouch *touch in touches) {
-        NSValue *key = [NSValue valueWithNonretainedObject:touch];
-        UIView *dot = _touchToDotMap[key];
-        if (dot) {
-            dot.center = [touch locationInView:self];
-        }
-    }
+    [self renderTouchesFromEvent:event];
 }
 
 - (void)touchesEnded:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
-    for (UITouch *touch in touches) {
-        NSValue *key = [NSValue valueWithNonretainedObject:touch];
-        UIView *dot = _touchToDotMap[key];
-        if (dot) {
-            [dot removeFromSuperview];
-            [_touchToDotMap removeObjectForKey:key];
-        }
-    }
+    [self renderTouchesFromEvent:event];
 }
 
 - (void)touchesCancelled:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
-    [self touchesEnded:touches withEvent:event];
+    [self clearDots];
+}
+
+- (void)renderTouchesFromEvent:(UIEvent *)event {
+    [self clearDots];
+    NSSet<UITouch *> *allTouches = event.allTouches;
+    
+    for (UITouch *touch in allTouches) {
+        if (touch.phase == UITouchPhaseBegan || touch.phase == UITouchPhaseMoved || touch.phase == UITouchPhaseStationary) {
+            CGPoint loc = [touch locationInView:self];
+            UIView *dot = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 36, 36)];
+            dot.center = loc;
+            dot.tag = 7777; // Bezpieczny tag dla kropek dotyku
+            dot.backgroundColor = _isStepVerified ? [UIColor systemGreenColor] : [[UIColor systemCyanColor] colorWithAlphaComponent:0.8];
+            dot.layer.cornerRadius = 18;
+            dot.layer.borderWidth = 2.0;
+            dot.layer.borderColor = [UIColor whiteColor].CGColor;
+            dot.userInteractionEnabled = NO;
+            [self addSubview:dot];
+        }
+    }
 }
 
 @end
