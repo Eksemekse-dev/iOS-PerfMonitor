@@ -4,7 +4,7 @@
 #import <sys/types.h>
 #include <unistd.h>
 
-// --- FIRST-LAUNCH TUTORIAL OVERLAY ---
+// --- FIRST-LAUNCH TUTORIAL WITH TOUCH TRACKING & ISLAND HEADER ---
 @interface PerfTutorialView : UIView
 @property (nonatomic, copy) void (^onCompleted)(void);
 - (void)continueToNextStep;
@@ -12,45 +12,45 @@
 
 @implementation PerfTutorialView {
     int _currentStep;
-    UILabel *_instructionLabel;
-    UILabel *_stepCounterLabel;
-    UIView *_gestureIndicator;
+    UILabel *_headerInstructionLabel;
+    UILabel *_stepSubtitleLabel;
+    NSMutableDictionary<NSValue *, UIView *> *_touchDots;
+    BOOL _isStepVerified;
 }
 
 - (instancetype)initWithFrame:(CGRect)frame {
     if (self = [super initWithFrame:frame]) {
-        self.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.95];
+        self.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.85];
+        self.multipleTouchEnabled = YES;
+        _touchDots = [NSMutableDictionary dictionary];
         _currentStep = 1;
+        _isStepVerified = NO;
 
-        UILabel *titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, 80, frame.size.width - 40, 40)];
-        titleLabel.text = @"Quick Setup Guide";
-        titleLabel.textColor = [UIColor whiteColor];
-        titleLabel.font = [UIFont systemFontOfSize:24 weight:UIFontWeightBold];
-        titleLabel.textAlignment = NSTextAlignmentCenter;
-        [self addSubview:titleLabel];
-
-        _stepCounterLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, 120, frame.size.width - 40, 24)];
-        _stepCounterLabel.textColor = [UIColor systemCyanColor];
-        _stepCounterLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightSemibold];
-        _stepCounterLabel.textAlignment = NSTextAlignmentCenter;
-        [self addSubview:_stepCounterLabel];
-
-        _instructionLabel = [[UILabel alloc] initWithFrame:CGRectMake(40, frame.size.height / 2.0 - 60, frame.size.width - 80, 100)];
-        _instructionLabel.textColor = [UIColor lightGrayColor];
-        _instructionLabel.font = [UIFont systemFontOfSize:16 weight:UIFontWeightMedium];
-        _instructionLabel.textAlignment = NSTextAlignmentCenter;
-        _instructionLabel.numberOfLines = 0;
-        [self addSubview:_instructionLabel];
-
-        // 4 kropki reprezentujące 4 palce
-        _gestureIndicator = [[UIView alloc] initWithFrame:CGRectMake((frame.size.width - 160) / 2.0, frame.size.height / 2.0 + 50, 160, 40)];
-        for (int i = 0; i < 4; i++) {
-            UIView *dot = [[UIView alloc] initWithFrame:CGRectMake(i * 45, 10, 20, 20)];
-            dot.backgroundColor = [UIColor systemCyanColor];
-            dot.layer.cornerRadius = 10;
-            [_gestureIndicator addSubview:dot];
+        UIEdgeInsets safeInsets = UIEdgeInsetsZero;
+        if (@available(iOS 11.0, *)) {
+            UIWindow *window = [UIApplication sharedApplication].windows.firstObject;
+            safeInsets = window.safeAreaInsets;
         }
-        [self addSubview:_gestureIndicator];
+
+        CGFloat topY = safeInsets.top > 0 ? safeInsets.top + 5 : 35;
+
+        // Banner z instrukcją pod Dynamiczną Wyspą / Notchem
+        _headerInstructionLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, topY, frame.size.width - 40, 36)];
+        _headerInstructionLabel.backgroundColor = [[UIColor whiteColor] colorWithAlphaComponent:0.12];
+        _headerInstructionLabel.textColor = [UIColor whiteColor];
+        _headerInstructionLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightBold];
+        _headerInstructionLabel.textAlignment = NSTextAlignmentCenter;
+        _headerInstructionLabel.layer.cornerRadius = 18;
+        _headerInstructionLabel.layer.masksToBounds = YES;
+        _headerInstructionLabel.layer.borderWidth = 1.0;
+        _headerInstructionLabel.layer.borderColor = [[UIColor whiteColor] colorWithAlphaComponent:0.2].CGColor;
+        [self addSubview:_headerInstructionLabel];
+
+        _stepSubtitleLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, topY + 45, frame.size.width - 40, 20)];
+        _stepSubtitleLabel.textColor = [UIColor systemCyanColor];
+        _stepSubtitleLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightSemibold];
+        _stepSubtitleLabel.textAlignment = NSTextAlignmentCenter;
+        [self addSubview:_stepSubtitleLabel];
 
         [self updateStepContent];
     }
@@ -58,21 +58,97 @@
 }
 
 - (void)updateStepContent {
+    _isStepVerified = NO;
+    _headerInstructionLabel.backgroundColor = [[UIColor whiteColor] colorWithAlphaComponent:0.12];
+    _headerInstructionLabel.layer.borderColor = [[UIColor whiteColor] colorWithAlphaComponent:0.2].CGColor;
+    _headerInstructionLabel.textColor = [UIColor whiteColor];
+
     if (_currentStep == 1) {
-        _stepCounterLabel.text = @"STEP 1 OF 2";
-        _instructionLabel.text = @"Use a 4-finger single tap to toggle the floating performance monitor (PiP). Try it now!";
+        _stepSubtitleLabel.text = @"STEP 1 OF 2 - TAP TEST";
+        _headerInstructionLabel.text = @"Tap with 4 fingers below the island";
     } else if (_currentStep == 2) {
-        _stepCounterLabel.text = @"STEP 2 OF 2";
-        _instructionLabel.text = @"Use a 4-finger long press (2 seconds) to open the full diagnostic dashboard. Try it now!";
+        _stepSubtitleLabel.text = @"STEP 2 OF 2 - HOLD TEST";
+        _headerInstructionLabel.text = @"Hold 4 fingers for 2 seconds";
     }
 }
 
+- (void)markStepAsVerifiedWithCompletion:(void (^)(void))completion {
+    if (_isStepVerified) return;
+    _isStepVerified = YES;
+
+    UIImpactFeedbackGenerator *feedback = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleMedium];
+    [feedback impactOccurred];
+
+    [UIView animateWithDuration:0.25 animations:^{
+        self->_headerInstructionLabel.backgroundColor = [[UIColor systemGreenColor] colorWithAlphaComponent:0.3];
+        self->_headerInstructionLabel.layer.borderColor = [UIColor systemGreenColor].CGColor;
+        self->_headerInstructionLabel.textColor = [UIColor systemGreenColor];
+
+        for (UIView *dot in self->_touchDots.allValues) {
+            dot.backgroundColor = [UIColor systemGreenColor];
+            dot.transform = CGAffineTransformMakeScale(1.4, 1.4);
+        }
+    } completion:^(BOOL finished) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.4 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            if (completion) completion();
+        });
+    }];
+}
+
 - (void)continueToNextStep {
-    _currentStep++;
-    if (_currentStep > 2) {
-        if (self.onCompleted) self.onCompleted();
-    } else {
-        [self updateStepContent];
+    [self markStepAsVerifiedWithCompletion:^{
+        self->_currentStep++;
+        if (self->_currentStep > 2) {
+            if (self.onCompleted) self.onCompleted();
+        } else {
+            [self updateStepContent];
+        }
+    }];
+}
+
+// --- VISUAL TOUCH DOTS TRACKING ---
+- (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+    [self updateTouches:event.allTouches];
+}
+
+- (void)touchesMoved:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+    [self updateTouches:event.allTouches];
+}
+
+- (void)touchesEnded:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+    for (UITouch *touch in touches) {
+        NSValue *key = [NSValue valueWithPointer:(__bridge const void *)(touch)];
+        UIView *dot = _touchDots[key];
+        if (dot) {
+            [dot removeFromSuperview];
+            [_touchDots removeObjectForKey:key];
+        }
+    }
+}
+
+- (void)touchesCancelled:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+    [self touchesEnded:touches withEvent:event];
+}
+
+- (void)updateTouches:(NSSet<UITouch *> *)allTouches {
+    for (UITouch *touch in allTouches) {
+        if (touch.phase == UITouchPhaseBegan || touch.phase == UITouchPhaseMoved) {
+            CGPoint location = [touch locationInView:self];
+            NSValue *key = [NSValue valueWithPointer:(__bridge const void *)(touch)];
+            UIView *dot = _touchDots[key];
+
+            if (!dot) {
+                dot = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 36, 36)];
+                dot.backgroundColor = _isStepVerified ? [UIColor systemGreenColor] : [[UIColor systemCyanColor] colorWithAlphaComponent:0.8];
+                dot.layer.cornerRadius = 18;
+                dot.layer.borderWidth = 2.0;
+                dot.layer.borderColor = [UIColor whiteColor].CGColor;
+                dot.userInteractionEnabled = NO;
+                [self addSubview:dot];
+                _touchDots[key] = dot;
+            }
+            dot.center = location;
+        }
     }
 }
 
@@ -395,7 +471,7 @@ static UIWindow *tutorialWindow = nil;
 
 + (NSString *)getTutorialStateFilePath {
     NSArray *paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
-    return [paths[0] stringByAppendingPathComponent:@"perf_monitor_tutorial_v1.flag"];
+    return [paths[0] stringByAppendingPathComponent:@"perf_monitor_tutorial_v2.flag"];
 }
 
 + (BOOL)hasCompletedTutorial {
@@ -480,13 +556,10 @@ static UIWindow *tutorialWindow = nil;
 + (void)handleFourFingerTap:(UITapGestureRecognizer *)sender {
     if (sender.state == UIGestureRecognizerStateRecognized) {
         if (tutorialWindow) {
-            [UIView animateWithDuration:0.3 animations:^{
-                tutorialWindow.alpha = 0.0;
-            } completion:^(BOOL finished) {
-                tutorialWindow.hidden = YES;
-                tutorialWindow = nil;
-                [PerfMonitorManager setTutorialCompleted];
-            }];
+            PerfTutorialView *tutView = (PerfTutorialView *)tutorialWindow.rootViewController.view;
+            if ([tutView isKindOfClass:[PerfTutorialView class]]) {
+                [tutView continueToNextStep];
+            }
             return;
         }
 
@@ -499,13 +572,18 @@ static UIWindow *tutorialWindow = nil;
 + (void)handleFourFingerLongPress:(UILongPressGestureRecognizer *)sender {
     if (sender.state == UIGestureRecognizerStateBegan) {
         if (tutorialWindow) {
-            [UIView animateWithDuration:0.3 animations:^{
-                tutorialWindow.alpha = 0.0;
-            } completion:^(BOOL finished) {
-                tutorialWindow.hidden = YES;
-                tutorialWindow = nil;
-                [PerfMonitorManager setTutorialCompleted];
-            }];
+            PerfTutorialView *tutView = (PerfTutorialView *)tutorialWindow.rootViewController.view;
+            if ([tutView isKindOfClass:[PerfTutorialView class]]) {
+                [tutView markStepAsVerifiedWithCompletion:^{
+                    [UIView animateWithDuration:0.3 animations:^{
+                        tutorialWindow.alpha = 0.0;
+                    } completion:^(BOOL finished) {
+                        tutorialWindow.hidden = YES;
+                        tutorialWindow = nil;
+                        [PerfMonitorManager setTutorialCompleted];
+                    }];
+                }];
+            }
             return;
         }
 
