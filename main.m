@@ -386,7 +386,7 @@
         UIView *footerView = [[UIView alloc] initWithFrame:CGRectMake(20, cardView.frame.size.height - 58, cardView.frame.size.width - 40, 46)];
         [cardView addSubview:footerView];
 
-        UILabel *creditLabel = [[UILabel alloc] initWithFrame:CGRectMake(0, 0, footerView.frame.size.width - 40, 46)];
+        UILabel *creditLabel = [[UILabel alloc] initWithFrame:CGRectMake(0, 0, footerView.frame.size.width - 95, 46)];
         creditLabel.text = @"Created by Eksemekse-dev with AI";
         creditLabel.textColor = [UIColor darkGrayColor];
         creditLabel.font = [UIFont systemFontOfSize:11 weight:UIFontWeightMedium];
@@ -394,10 +394,16 @@
         [footerView addSubview:creditLabel];
 
         UIButton *githubButton = [UIButton buttonWithType:UIButtonTypeSystem];
-        githubButton.frame = CGRectMake(footerView.frame.size.width - 36, 5, 36, 36);
-        // Użycie ikony powiązanej z repozytorium/GitHub (alternatywnie standardowa symboliczna grafika sieciowa)
+        githubButton.frame = CGRectMake(footerView.frame.size.width - 90, 7, 90, 32);
+        // Logo planety / sieci z etykietą GitHub otwierające projekt
         [githubButton setImage:[UIImage systemImageNamed:@"network"] forState:UIControlStateNormal];
+        [githubButton setTitle:@" GitHub" forState:UIControlStateNormal];
         githubButton.tintColor = [UIColor systemBlueColor];
+        githubButton.titleLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightBold];
+        githubButton.backgroundColor = [[UIColor systemBlueColor] colorWithAlphaComponent:0.12];
+        githubButton.layer.cornerRadius = 8;
+        githubButton.layer.borderWidth = 1.0;
+        githubButton.layer.borderColor = [[UIColor systemBlueColor] colorWithAlphaComponent:0.3].CGColor;
         [githubButton addTarget:self action:@selector(openGithubTapped) forControlEvents:UIControlEventTouchUpInside];
         [footerView addSubview:githubButton];
     }
