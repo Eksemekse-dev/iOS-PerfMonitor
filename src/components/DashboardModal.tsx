@@ -16,6 +16,7 @@ import {
   ExternalLink,
   Check,
   Flame,
+  Globe,
 } from 'lucide-react';
 
 interface DashboardModalProps {
@@ -206,8 +207,8 @@ Thermal State: ${telemetry.thermalState}`;
           </button>
         </div>
 
-        {/* Footer: Created by Eksemekse-dev with AI */}
-        <div className="flex items-center justify-between px-5 py-3.5 bg-black/30 border-t border-white/10 shrink-0">
+        {/* Footer: Created by Eksemekse-dev with AI + Planet/Globe GitHub Button */}
+        <div className="flex items-center justify-between px-5 py-3.5 bg-black/40 border-t border-white/10 shrink-0">
           <span className="text-[11px] font-medium text-neutral-400">
             Created by Eksemekse-dev with AI
           </span>
@@ -215,10 +216,12 @@ Thermal State: ${telemetry.thermalState}`;
             href="https://github.com/Eksemekse-dev/iOS-PerfMonitor"
             target="_blank"
             rel="noopener noreferrer"
-            className="flex items-center gap-1.5 text-[11px] font-medium text-blue-400 hover:text-blue-300 transition-colors"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600/20 hover:bg-blue-600/30 border border-blue-500/30 text-blue-400 hover:text-blue-300 font-bold text-xs transition-all active:scale-95"
+            title="Open GitHub Repository"
           >
+            <Globe className="w-3.5 h-3.5 text-blue-400" />
             <span>GitHub</span>
-            <ExternalLink className="w-3.5 h-3.5" />
+            <ExternalLink className="w-3 h-3 opacity-60 ml-0.5" />
           </a>
         </div>
 
