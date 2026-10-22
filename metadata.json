@@ -1,0 +1,8 @@
+{
+  "name": "iOS PerfMonitor",
+  "description": "System-level performance monitoring overlay and diagnostic dashboard for iOS and LiveContainer, featuring floating PiP telemetry, RAM stress testing, and real-time hardware vitals.",
+  "permissions": [],
+  "capabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
