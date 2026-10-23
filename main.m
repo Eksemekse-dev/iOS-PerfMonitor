@@ -304,6 +304,10 @@ static UIWindow *tutorialWindow = nil;
     NSInteger colorIdx = [defs integerForKey:@"perf_pip_color_idx"];
     self.backgroundColor = getPerfColorForIndex(colorIdx, opacity);
 
+    // Size / Scale
+    float scale = [defs floatForKey:@"perf_pip_scale"];
+    if (scale < 0.6f || scale > 1.6f) scale = 1.0f;
+
     // Count visible lines to auto-size window
     BOOL showCpu = [defs objectForKey:@"perf_show_cpu"] ? [defs boolForKey:@"perf_show_cpu"] : YES;
     BOOL showRam = [defs objectForKey:@"perf_show_ram"] ? [defs boolForKey:@"perf_show_ram"] : YES;
@@ -313,8 +317,13 @@ static UIWindow *tutorialWindow = nil;
     int activeCount = (showCpu ? 1 : 0) + (showRam ? 1 : 0) + (showTemp ? 1 : 0) + (showFps ? 1 : 0);
     if (activeCount == 0) activeCount = 1;
 
-    CGFloat newH = 26 + activeCount * 17;
-    CGFloat newW = (showFps ? 150 : 142);
+    CGFloat baseH = 26 + activeCount * 17;
+    CGFloat baseW = (showFps ? 150 : 142);
+    CGFloat newW = round(baseW * scale);
+    CGFloat newH = round(baseH * scale);
+
+    self.layer.cornerRadius = 14.0f * scale;
+    self.infoLabel.font = [UIFont systemFontOfSize:MAX(8.5f, 11.0f * scale) weight:UIFontWeightSemibold];
 
     if (sharedMonitorWindow) {
         CGPoint center = sharedMonitorWindow.center;
@@ -402,6 +411,10 @@ static UIWindow *tutorialWindow = nil;
     UIButton *_testButton;
     UILabel *_opacityValueLabel;
     UISlider *_opacitySlider;
+    UILabel *_sizeValueLabel;
+    UISlider *_sizeSlider;
+    UIView *_previewPipView;
+    UILabel *_previewInfoLabel;
 }
 
 - (instancetype)initWithFrame:(CGRect)frame {
@@ -570,10 +583,72 @@ static UIWindow *tutorialWindow = nil;
         float curOpacity = [defs floatForKey:@"perf_pip_opacity"];
         if (curOpacity <= 0.05f) curOpacity = 0.85f;
         NSInteger curColorIdx = [defs integerForKey:@"perf_pip_color_idx"];
+        float curScale = [defs floatForKey:@"perf_pip_scale"];
+        if (curScale < 0.6f || curScale > 1.6f) curScale = 1.0f;
 
         CGFloat sY = 4;
 
-        // 1. Opacity Header & Slider
+        // --- 0. LIVE PIP PREVIEW BOX ---
+        UIView *previewBox = [[UIView alloc] initWithFrame:CGRectMake(4, sY, settingsScroll.frame.size.width - 8, 96)];
+        previewBox.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.4];
+        previewBox.layer.cornerRadius = 14;
+        previewBox.layer.borderWidth = 1.0;
+        previewBox.layer.borderColor = [[UIColor whiteColor] colorWithAlphaComponent:0.12].CGColor;
+        previewBox.clipsToBounds = YES;
+        [settingsScroll addSubview:previewBox];
+
+        UILabel *previewTitle = [[UILabel alloc] initWithFrame:CGRectMake(12, 6, previewBox.frame.size.width - 24, 16)];
+        previewTitle.text = @"LIVE PIP PREVIEW (PODGLĄD NA ŻYWO)";
+        previewTitle.textColor = [UIColor systemCyanColor];
+        previewTitle.font = [UIFont systemFontOfSize:10 weight:UIFontWeightBold];
+        [previewBox addSubview:previewTitle];
+
+        _previewPipView = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 142, 56)];
+        _previewPipView.center = CGPointMake(previewBox.frame.size.width / 2.0, 56);
+        _previewPipView.layer.cornerRadius = 12;
+        _previewPipView.layer.masksToBounds = YES;
+        _previewPipView.layer.borderWidth = 1.0;
+        _previewPipView.layer.borderColor = [[UIColor whiteColor] colorWithAlphaComponent:0.3].CGColor;
+        _previewPipView.backgroundColor = getPerfColorForIndex(curColorIdx, curOpacity);
+        _previewPipView.transform = CGAffineTransformMakeScale(curScale, curScale);
+        [previewBox addSubview:_previewPipView];
+
+        _previewInfoLabel = [[UILabel alloc] initWithFrame:_previewPipView.bounds];
+        _previewInfoLabel.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        _previewInfoLabel.textColor = [UIColor whiteColor];
+        _previewInfoLabel.font = [UIFont systemFontOfSize:10 weight:UIFontWeightSemibold];
+        _previewInfoLabel.numberOfLines = 0;
+        _previewInfoLabel.textAlignment = NSTextAlignmentCenter;
+        _previewInfoLabel.text = @"CPU: 14.8%\nRAM: 52.4 MB\nTemp: Normal";
+        [_previewPipView addSubview:_previewInfoLabel];
+
+        sY += 106;
+
+        // --- 1. PIP SIZE / SCALE SLIDER ---
+        UILabel *szTitle = [[UILabel alloc] initWithFrame:CGRectMake(4, sY, settingsScroll.frame.size.width - 80, 20)];
+        szTitle.text = @"PiP Size (Rozmiar suwakiem)";
+        szTitle.textColor = [UIColor whiteColor];
+        szTitle.font = [UIFont systemFontOfSize:13 weight:UIFontWeightBold];
+        [settingsScroll addSubview:szTitle];
+
+        _sizeValueLabel = [[UILabel alloc] initWithFrame:CGRectMake(settingsScroll.frame.size.width - 70, sY, 66, 20)];
+        _sizeValueLabel.text = [NSString stringWithFormat:@"%d%%", (int)(curScale * 100)];
+        _sizeValueLabel.textColor = [UIColor systemGreenColor];
+        _sizeValueLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightBold];
+        _sizeValueLabel.textAlignment = NSTextAlignmentRight;
+        [settingsScroll addSubview:_sizeValueLabel];
+        sY += 26;
+
+        _sizeSlider = [[UISlider alloc] initWithFrame:CGRectMake(4, sY, settingsScroll.frame.size.width - 8, 30)];
+        _sizeSlider.minimumValue = 0.65f;
+        _sizeSlider.maximumValue = 1.35f;
+        _sizeSlider.value = curScale;
+        _sizeSlider.tintColor = [UIColor systemGreenColor];
+        [_sizeSlider addTarget:self action:@selector(sizeSliderChanged:) forControlEvents:UIControlEventValueChanged];
+        [settingsScroll addSubview:_sizeSlider];
+        sY += 40;
+
+        // --- 2. PIP OPACITY SLIDER ---
         UILabel *opTitle = [[UILabel alloc] initWithFrame:CGRectMake(4, sY, settingsScroll.frame.size.width - 80, 20)];
         opTitle.text = @"PiP Opacity (Przeźroczystość)";
         opTitle.textColor = [UIColor whiteColor];
@@ -702,7 +777,36 @@ static UIWindow *tutorialWindow = nil;
         _diagScrollView.hidden = YES;
         _testButton.hidden = YES;
         _settingsContainerView.hidden = NO;
+        [self updateLivePreview];
     }
+}
+
+- (void)updateLivePreview {
+    NSUserDefaults *defs = [NSUserDefaults standardUserDefaults];
+    float curOpacity = _opacitySlider ? _opacitySlider.value : [defs floatForKey:@"perf_pip_opacity"];
+    if (curOpacity <= 0.05f) curOpacity = 0.85f;
+    NSInteger curColorIdx = [defs integerForKey:@"perf_pip_color_idx"];
+    float curScale = _sizeSlider ? _sizeSlider.value : [defs floatForKey:@"perf_pip_scale"];
+    if (curScale < 0.6f || curScale > 1.6f) curScale = 1.0f;
+
+    if (_previewPipView) {
+        _previewPipView.backgroundColor = getPerfColorForIndex(curColorIdx, curOpacity);
+        _previewPipView.transform = CGAffineTransformMakeScale(curScale, curScale);
+    }
+}
+
+- (void)sizeSliderChanged:(UISlider *)sender {
+    @try {
+        float val = sender.value;
+        _sizeValueLabel.text = [NSString stringWithFormat:@"%d%%", (int)(val * 100)];
+        [[NSUserDefaults standardUserDefaults] setFloat:val forKey:@"perf_pip_scale"];
+        [self updateLivePreview];
+        if (sharedMonitorView) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [sharedMonitorView applySettings];
+            });
+        }
+    } @catch (NSException *e) {}
 }
 
 - (void)opacitySliderChanged:(UISlider *)sender {
@@ -710,6 +814,7 @@ static UIWindow *tutorialWindow = nil;
         float val = sender.value;
         _opacityValueLabel.text = [NSString stringWithFormat:@"%d%%", (int)(val * 100)];
         [[NSUserDefaults standardUserDefaults] setFloat:val forKey:@"perf_pip_opacity"];
+        [self updateLivePreview];
         if (sharedMonitorView) {
             dispatch_async(dispatch_get_main_queue(), ^{
                 [sharedMonitorView applySettings];
@@ -734,6 +839,8 @@ static UIWindow *tutorialWindow = nil;
                 }
             }
         }
+
+        [self updateLivePreview];
 
         @try {
             Class feedbackClass = NSClassFromString(@"UIImpactFeedbackGenerator");

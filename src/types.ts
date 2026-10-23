@@ -27,6 +27,7 @@ export interface DiagnosticItem {
 
 export interface PipSettings {
   opacity: number; // 0.2 to 1.0
+  scale: number; // 0.65 to 1.35
   bgColor: string; // hex color
   accentColor: string; // hex color
   showCpu: boolean;

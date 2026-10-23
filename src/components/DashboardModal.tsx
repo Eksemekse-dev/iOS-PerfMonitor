@@ -21,6 +21,7 @@ import {
   Palette,
   Eye,
   RotateCcw,
+  Maximize2,
 } from 'lucide-react';
 
 interface DashboardModalProps {
@@ -167,6 +168,7 @@ Thermal State: ${telemetry.thermalState}`;
     triggerHaptic('medium');
     onUpdateSettings({
       opacity: 0.85,
+      scale: 1.0,
       bgColor: '#000000',
       accentColor: '#38bdf8',
       showCpu: true,
@@ -285,53 +287,89 @@ Thermal State: ${telemetry.thermalState}`;
           /* Tab 2: PiP Customization Settings */
           <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5 text-white">
             {/* Live Preview Box */}
-            <div className="p-4 rounded-2xl bg-black/40 border border-white/10 flex flex-col items-center">
+            <div className="p-4 rounded-2xl bg-black/40 border border-white/10 flex flex-col items-center overflow-hidden">
               <div className="text-[11px] font-semibold text-neutral-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
                 <Eye className="w-3.5 h-3.5 text-cyan-400" />
-                Live PiP Preview
+                Podgląd PiP na żywo (Live Preview)
               </div>
-              <div
-                style={{
-                  backgroundColor: settings.bgColor,
-                  opacity: settings.opacity,
-                  borderColor: settings.accentColor,
-                }}
-                className="w-36 rounded-[14px] p-2 border backdrop-blur-md shadow-lg flex flex-col items-center justify-center text-[11px] font-mono font-semibold transition-all"
-              >
-                {settings.showCpu && (
-                  <div className="flex items-center gap-1">
-                    <span className="text-white/70">CPU:</span>
-                    <span style={{ color: settings.accentColor }}>14.8%</span>
-                  </div>
-                )}
-                {settings.showRam && (
-                  <div className="flex items-center gap-1">
-                    <span className="text-white/70">RAM:</span>
-                    <span className="text-purple-300">52.4 MB</span>
-                  </div>
-                )}
-                {settings.showThermal && (
-                  <div className="flex items-center gap-1">
-                    <span className="text-white/70">Temp:</span>
-                    <span className="text-emerald-400">Normal</span>
-                  </div>
-                )}
-                {settings.showFps && (
-                  <div className="flex items-center gap-1">
-                    <span className="text-white/70">FPS:</span>
-                    <span className="text-emerald-400">60.0</span>
-                  </div>
-                )}
-                {settings.showModel && (
-                  <div className="flex items-center gap-1">
-                    <span className="text-white/70">Dev:</span>
-                    <span className="text-cyan-200">iPhone15</span>
-                  </div>
-                )}
+              <div className="h-28 flex items-center justify-center">
+                <div
+                  style={{
+                    backgroundColor: settings.bgColor,
+                    opacity: settings.opacity,
+                    borderColor: settings.accentColor,
+                    transform: `scale(${settings.scale || 1.0})`,
+                    transformOrigin: 'center center',
+                  }}
+                  className="w-36 rounded-[14px] p-2 border backdrop-blur-md shadow-lg flex flex-col items-center justify-center text-[11px] font-mono font-semibold transition-all duration-150"
+                >
+                  {settings.showCpu && (
+                    <div className="flex items-center gap-1">
+                      <span className="text-white/70">CPU:</span>
+                      <span style={{ color: settings.accentColor }}>14.8%</span>
+                    </div>
+                  )}
+                  {settings.showRam && (
+                    <div className="flex items-center gap-1">
+                      <span className="text-white/70">RAM:</span>
+                      <span className="text-purple-300">52.4 MB</span>
+                    </div>
+                  )}
+                  {settings.showThermal && (
+                    <div className="flex items-center gap-1">
+                      <span className="text-white/70">Temp:</span>
+                      <span className="text-emerald-400">Normal</span>
+                    </div>
+                  )}
+                  {settings.showFps && (
+                    <div className="flex items-center gap-1">
+                      <span className="text-white/70">FPS:</span>
+                      <span className="text-emerald-400">60.0</span>
+                    </div>
+                  )}
+                  {settings.showModel && (
+                    <div className="flex items-center gap-1">
+                      <span className="text-white/70">Dev:</span>
+                      <span className="text-cyan-200">iPhone15</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+              <div className="text-[10px] text-neutral-400 font-mono mt-1">
+                Kolor: {settings.bgColor} • Przeźroczystość: {Math.round(settings.opacity * 100)}% • Rozmiar: {Math.round((settings.scale || 1.0) * 100)}%
               </div>
             </div>
 
-            {/* 1. Opacity Slider */}
+            {/* 1. Size / Scale Slider */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-bold text-neutral-200 flex items-center gap-2">
+                  <Maximize2 className="w-4 h-4 text-emerald-400" />
+                  Rozmiar nakładki PiP (Size Scale)
+                </label>
+                <span className="text-xs font-mono font-bold text-emerald-300 bg-emerald-950/60 px-2 py-0.5 rounded-md border border-emerald-500/30">
+                  {Math.round((settings.scale || 1.0) * 100)}%
+                </span>
+              </div>
+              <input
+                type="range"
+                min="0.65"
+                max="1.35"
+                step="0.05"
+                value={settings.scale || 1.0}
+                onChange={(e) =>
+                  onUpdateSettings({ ...settings, scale: parseFloat(e.target.value) })
+                }
+                className="w-full h-2 bg-neutral-800 rounded-lg appearance-none cursor-pointer accent-emerald-400"
+              />
+              <div className="flex justify-between text-[10px] text-neutral-500 font-mono">
+                <span>65% (Kompaktowy)</span>
+                <span>100% (Standard)</span>
+                <span>135% (Duży)</span>
+              </div>
+            </div>
+
+            {/* 2. Opacity Slider */}
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <label className="text-xs font-bold text-neutral-200 flex items-center gap-2">

@@ -124,11 +124,13 @@ export const FloatingPiP: React.FC<FloatingPiPProps> = ({
   };
 
   const bgColorWithOpacity = hexToRgba(settings.bgColor, settings.opacity);
+  const scale = settings.scale || 1.0;
 
   return (
     <div
       style={{
-        transform: `translate3d(${position.x}px, ${position.y}px, 0)`,
+        transform: `translate3d(${position.x}px, ${position.y}px, 0) scale(${scale})`,
+        transformOrigin: 'top left',
         width: `${pipWidth}px`,
         height: `${pipHeight}px`,
         backgroundColor: bgColorWithOpacity,

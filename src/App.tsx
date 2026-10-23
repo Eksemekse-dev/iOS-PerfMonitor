@@ -66,6 +66,7 @@ export default function App() {
     }
     return {
       opacity: 0.85,
+      scale: 1.0,
       bgColor: '#000000',
       accentColor: '#38bdf8',
       showCpu: true,
