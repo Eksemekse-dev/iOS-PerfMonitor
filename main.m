@@ -598,7 +598,7 @@ static UIWindow *tutorialWindow = nil;
         [settingsScroll addSubview:previewBox];
 
         UILabel *previewTitle = [[UILabel alloc] initWithFrame:CGRectMake(12, 6, previewBox.frame.size.width - 24, 16)];
-        previewTitle.text = @"LIVE PIP PREVIEW (PODGLĄD NA ŻYWO)";
+        previewTitle.text = @"LIVE PIP PREVIEW"
         previewTitle.textColor = [UIColor systemCyanColor];
         previewTitle.font = [UIFont systemFontOfSize:10 weight:UIFontWeightBold];
         [previewBox addSubview:previewTitle];
@@ -626,7 +626,7 @@ static UIWindow *tutorialWindow = nil;
 
         // --- 1. PIP SIZE / SCALE SLIDER ---
         UILabel *szTitle = [[UILabel alloc] initWithFrame:CGRectMake(4, sY, settingsScroll.frame.size.width - 80, 20)];
-        szTitle.text = @"PiP Size (Rozmiar suwakiem)";
+        szTitle.text = @"PiP Size";
         szTitle.textColor = [UIColor whiteColor];
         szTitle.font = [UIFont systemFontOfSize:13 weight:UIFontWeightBold];
         [settingsScroll addSubview:szTitle];
@@ -650,7 +650,7 @@ static UIWindow *tutorialWindow = nil;
 
         // --- 2. PIP OPACITY SLIDER ---
         UILabel *opTitle = [[UILabel alloc] initWithFrame:CGRectMake(4, sY, settingsScroll.frame.size.width - 80, 20)];
-        opTitle.text = @"PiP Opacity (Przeźroczystość)";
+        opTitle.text = @"PiP Opacity";
         opTitle.textColor = [UIColor whiteColor];
         opTitle.font = [UIFont systemFontOfSize:13 weight:UIFontWeightBold];
         [settingsScroll addSubview:opTitle];
@@ -674,7 +674,7 @@ static UIWindow *tutorialWindow = nil;
 
         // 2. Color Selection Palette
         UILabel *colTitle = [[UILabel alloc] initWithFrame:CGRectMake(4, sY, settingsScroll.frame.size.width - 8, 20)];
-        colTitle.text = @"PiP Background Color (Kolor tła)";
+        colTitle.text = @"PiP Background Color";
         colTitle.textColor = [UIColor whiteColor];
         colTitle.font = [UIFont systemFontOfSize:13 weight:UIFontWeightBold];
         [settingsScroll addSubview:colTitle];
@@ -704,7 +704,7 @@ static UIWindow *tutorialWindow = nil;
 
         // 3. Visible Metrics Toggles
         UILabel *metricsTitle = [[UILabel alloc] initWithFrame:CGRectMake(4, sY, settingsScroll.frame.size.width - 8, 20)];
-        metricsTitle.text = @"Visible Metrics (Wyświetlane dane)";
+        metricsTitle.text = @"Visible Metrics";
         metricsTitle.textColor = [UIColor whiteColor];
         metricsTitle.font = [UIFont systemFontOfSize:13 weight:UIFontWeightBold];
         [settingsScroll addSubview:metricsTitle];
