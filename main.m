@@ -402,7 +402,6 @@ static UIWindow *tutorialWindow = nil;
     UIButton *_testButton;
     UILabel *_opacityValueLabel;
     UISlider *_opacitySlider;
-    NSMutableArray<UIButton *> *_colorButtons;
 }
 
 - (instancetype)initWithFrame:(CGRect)frame {
@@ -606,7 +605,6 @@ static UIWindow *tutorialWindow = nil;
         [settingsScroll addSubview:colTitle];
         sY += 26;
 
-        _colorButtons = [NSMutableArray array];
         NSArray *colorNames = @[@"Black", @"Navy", @"Cyan", @"Purple", @"Emerald", @"Crimson"];
         CGFloat btnW = (settingsScroll.frame.size.width - 20) / 3.0;
         CGFloat btnH = 34;
@@ -626,7 +624,6 @@ static UIWindow *tutorialWindow = nil;
             colBtn.tag = 100 + i;
             [colBtn addTarget:self action:@selector(colorSelected:) forControlEvents:UIControlEventTouchUpInside];
             [settingsScroll addSubview:colBtn];
-            [_colorButtons addObject:colBtn];
         }
         sY += (btnH + 8) * 2 + 12;
 
@@ -709,40 +706,65 @@ static UIWindow *tutorialWindow = nil;
 }
 
 - (void)opacitySliderChanged:(UISlider *)sender {
-    float val = sender.value;
-    _opacityValueLabel.text = [NSString stringWithFormat:@"%d%%", (int)(val * 100)];
-    [[NSUserDefaults standardUserDefaults] setFloat:val forKey:@"perf_pip_opacity"];
-    if (sharedMonitorView) {
-        [sharedMonitorView applySettings];
-    }
+    @try {
+        float val = sender.value;
+        _opacityValueLabel.text = [NSString stringWithFormat:@"%d%%", (int)(val * 100)];
+        [[NSUserDefaults standardUserDefaults] setFloat:val forKey:@"perf_pip_opacity"];
+        if (sharedMonitorView) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [sharedMonitorView applySettings];
+            });
+        }
+    } @catch (NSException *e) {}
 }
 
 - (void)colorSelected:(UIButton *)sender {
-    NSInteger idx = sender.tag - 100;
-    [[NSUserDefaults standardUserDefaults] setInteger:idx forKey:@"perf_pip_color_idx"];
+    @try {
+        NSInteger idx = sender.tag - 100;
+        [[NSUserDefaults standardUserDefaults] setInteger:idx forKey:@"perf_pip_color_idx"];
 
-    for (UIButton *btn in _colorButtons) {
-        NSInteger bIdx = btn.tag - 100;
-        btn.layer.borderWidth = (bIdx == idx) ? 2.5 : 1.0;
-        btn.layer.borderColor = (bIdx == idx) ? [UIColor whiteColor].CGColor : [[UIColor whiteColor] colorWithAlphaComponent:0.2].CGColor;
-    }
+        UIView *parentView = sender.superview;
+        if (parentView) {
+            for (UIView *subview in parentView.subviews) {
+                if ([subview isKindOfClass:[UIButton class]] && subview.tag >= 100 && subview.tag <= 105) {
+                    UIButton *btn = (UIButton *)subview;
+                    BOOL isCurrent = (btn.tag == sender.tag);
+                    btn.layer.borderWidth = isCurrent ? 2.5 : 1.0;
+                    btn.layer.borderColor = isCurrent ? [UIColor whiteColor].CGColor : [[UIColor whiteColor] colorWithAlphaComponent:0.2].CGColor;
+                }
+            }
+        }
 
-    UIImpactFeedbackGenerator *gen = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleLight];
-    [gen impactOccurred];
+        @try {
+            Class feedbackClass = NSClassFromString(@"UIImpactFeedbackGenerator");
+            if (feedbackClass) {
+                UIImpactFeedbackGenerator *gen = [[(UIImpactFeedbackGenerator *)[feedbackClass alloc] initWithStyle:UIImpactFeedbackStyleLight] init];
+                [gen impactOccurred];
+            }
+        } @catch (NSException *ex) {}
 
-    if (sharedMonitorView) {
-        [sharedMonitorView applySettings];
+        if (sharedMonitorView) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [sharedMonitorView applySettings];
+            });
+        }
+    } @catch (NSException *exception) {
+        NSLog(@"[PerfMonitor] colorSelected error: %@", exception);
     }
 }
 
 - (void)metricSwitchChanged:(UISwitch *)sender {
-    NSString *key = sender.accessibilityIdentifier;
-    if (key) {
-        [[NSUserDefaults standardUserDefaults] setBool:sender.isOn forKey:key];
-        if (sharedMonitorView) {
-            [sharedMonitorView applySettings];
+    @try {
+        NSString *key = sender.accessibilityIdentifier;
+        if (key) {
+            [[NSUserDefaults standardUserDefaults] setBool:sender.isOn forKey:key];
+            if (sharedMonitorView) {
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    [sharedMonitorView applySettings];
+                });
+            }
         }
-    }
+    } @catch (NSException *e) {}
 }
 
 - (void)openGithubTapped {
