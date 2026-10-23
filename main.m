@@ -598,7 +598,7 @@ static UIWindow *tutorialWindow = nil;
         [settingsScroll addSubview:previewBox];
 
         UILabel *previewTitle = [[UILabel alloc] initWithFrame:CGRectMake(12, 6, previewBox.frame.size.width - 24, 16)];
-        previewTitle.text = @"LIVE PIP PREVIEW"
+        previewTitle.text = @"LIVE PIP PREVIEW";
         previewTitle.textColor = [UIColor systemCyanColor];
         previewTitle.font = [UIFont systemFontOfSize:10 weight:UIFontWeightBold];
         [previewBox addSubview:previewTitle];
@@ -741,12 +741,12 @@ static UIWindow *tutorialWindow = nil;
 
         settingsScroll.contentSize = CGSizeMake(settingsScroll.frame.size.width, sY + 20);
 
-        // --- FOOTER: CREATED BY EKSEMEKSE-DEV WITH AI + GITHUB BUTTON ---
+        // --- FOOTER: CREATED BY EKSEMEKSE-DEV WITH AI + GITHUB BUTTON + VERSION  ---
         UIView *footerView = [[UIView alloc] initWithFrame:CGRectMake(18, cardView.frame.size.height - 52, cardView.frame.size.width - 36, 44)];
         [cardView addSubview:footerView];
 
         UILabel *creditLabel = [[UILabel alloc] initWithFrame:CGRectMake(0, 0, footerView.frame.size.width - 95, 44)];
-        creditLabel.text = @"Created by Eksemekse-dev with AI";
+        creditLabel.text = @"Created by Eksemekse-dev with AI, Version: 2.1";
         creditLabel.textColor = [UIColor darkGrayColor];
         creditLabel.font = [UIFont systemFontOfSize:11 weight:UIFontWeightMedium];
         creditLabel.numberOfLines = 2;
