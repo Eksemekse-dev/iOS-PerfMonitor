@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { TelemetryData } from '../types.ts';
+import { TelemetryData, PipSettings } from '../types.ts';
 import { formatDec, triggerHaptic } from '../utils/telemetry.ts';
 import {
   Activity,
@@ -17,21 +17,49 @@ import {
   Check,
   Flame,
   Globe,
+  Sliders,
+  Palette,
+  Eye,
+  RotateCcw,
 } from 'lucide-react';
 
 interface DashboardModalProps {
   telemetry: TelemetryData;
+  settings: PipSettings;
   isOpen: boolean;
   onClose: () => void;
   onRunStressTest: () => void;
+  onUpdateSettings: (newSettings: PipSettings) => void;
 }
+
+const COLOR_PRESETS = [
+  { name: 'OLED Black', hex: '#000000' },
+  { name: 'Dark Slate', hex: '#161822' },
+  { name: 'Cyber Cyan', hex: '#083344' },
+  { name: 'Neon Purple', hex: '#2e1065' },
+  { name: 'Emerald', hex: '#064e3b' },
+  { name: 'Crimson', hex: '#450a0a' },
+  { name: 'Frosted Smoke', hex: '#262626' },
+];
+
+const ACCENT_PRESETS = [
+  { name: 'Cyan', hex: '#38bdf8' },
+  { name: 'Emerald', hex: '#34d399' },
+  { name: 'Purple', hex: '#c084fc' },
+  { name: 'Amber', hex: '#fbbf24' },
+  { name: 'Rose', hex: '#fb7185' },
+  { name: 'White', hex: '#ffffff' },
+];
 
 export const DashboardModal: React.FC<DashboardModalProps> = ({
   telemetry,
+  settings,
   isOpen,
   onClose,
   onRunStressTest,
+  onUpdateSettings,
 }) => {
+  const [activeTab, setActiveTab] = useState<'diagnostics' | 'settings'>('diagnostics');
   const [copiedToast, setCopiedToast] = useState<string | null>(null);
 
   if (!isOpen) return null;
@@ -135,22 +163,40 @@ Thermal State: ${telemetry.thermalState}`;
     }, 2000);
   };
 
+  const handleResetSettings = () => {
+    triggerHaptic('medium');
+    onUpdateSettings({
+      opacity: 0.85,
+      bgColor: '#000000',
+      accentColor: '#38bdf8',
+      showCpu: true,
+      showRam: true,
+      showThermal: true,
+      showFps: false,
+      showModel: false,
+    });
+    showToast('Settings reset to default!');
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-black/60 backdrop-blur-xl animate-in fade-in duration-200">
       {/* Container Card */}
-      <div className="relative w-full max-w-[460px] max-h-[92vh] flex flex-col rounded-[26px] bg-[#1e1e22]/90 border border-white/15 shadow-2xl overflow-hidden backdrop-blur-2xl">
+      <div className="relative w-full max-w-[480px] max-h-[92vh] flex flex-col rounded-[26px] bg-[#1e1e22]/95 border border-white/15 shadow-2xl overflow-hidden backdrop-blur-2xl">
         {/* Header */}
-        <div className="flex items-center justify-between px-5 pt-5 pb-3 border-b border-white/10 shrink-0">
+        <div className="flex items-center justify-between px-5 pt-4 pb-2 border-b border-white/10 shrink-0">
           <div className="flex items-center gap-2.5">
             <div className="p-1.5 rounded-lg bg-blue-500/20 text-blue-400 animate-pulse-slow">
               <Activity className="w-5 h-5" />
             </div>
-            <h2 className="text-[17px] font-bold text-white tracking-tight">
-              Performance Dashboard
-            </h2>
+            <div>
+              <h2 className="text-[17px] font-bold text-white tracking-tight leading-tight">
+                Performance Dashboard
+              </h2>
+              <div className="text-[11px] text-cyan-400 font-mono">LiveContainer Secret Menu</div>
+            </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5">
             <button
               onClick={handleShare}
               title="Share Diagnostics"
@@ -168,44 +214,294 @@ Thermal State: ${telemetry.thermalState}`;
           </div>
         </div>
 
-        {/* Scrollable Diagnostics List */}
-        <div className="flex-1 overflow-y-auto px-4 py-3 space-y-2.5 divide-y-0">
-          {items.map((item) => (
-            <button
-              key={item.id}
-              onClick={() => handleCopyRow(item.value, item.title)}
-              className="w-full flex items-center justify-between px-3.5 py-3 rounded-xl bg-white/[0.05] hover:bg-white/[0.09] active:bg-white/[0.14] border border-white/[0.06] transition-all text-left group"
-            >
-              <div className="flex items-center gap-3">
-                <div className="p-1.5 rounded-lg bg-black/30 group-hover:scale-105 transition-transform">
-                  {item.icon}
-                </div>
-                <span className="text-[13px] font-medium text-neutral-300">
-                  {item.title}
-                </span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-[13px] font-bold text-white font-mono tracking-tight">
-                  {item.value}
-                </span>
-              </div>
-            </button>
-          ))}
-        </div>
-
-        {/* Action Button: Run RAM Stress Test */}
-        <div className="px-4 pt-2 pb-3 shrink-0">
+        {/* Tab Switcher */}
+        <div className="px-5 pt-3 pb-2 flex gap-2 shrink-0 border-b border-white/5 bg-black/20">
           <button
-            onClick={() => {
-              triggerHaptic('medium');
-              onRunStressTest();
-            }}
-            className="w-full py-3 px-4 rounded-xl bg-red-600 hover:bg-red-500 active:bg-red-700 text-white font-bold text-[14px] shadow-lg shadow-red-950/40 transition-all flex items-center justify-center gap-2 active:scale-[0.98]"
+            onClick={() => setActiveTab('diagnostics')}
+            className={`flex-1 py-1.5 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-all ${
+              activeTab === 'diagnostics'
+                ? 'bg-blue-600 text-white shadow-md'
+                : 'bg-white/5 text-neutral-400 hover:text-white hover:bg-white/10'
+            }`}
           >
-            <Flame className="w-4 h-4" />
-            <span>Run RAM Stress Test (OOM)</span>
+            <Activity className="w-3.5 h-3.5" />
+            <span>Diagnostics</span>
+          </button>
+          <button
+            onClick={() => setActiveTab('settings')}
+            className={`flex-1 py-1.5 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-all ${
+              activeTab === 'settings'
+                ? 'bg-blue-600 text-white shadow-md'
+                : 'bg-white/5 text-neutral-400 hover:text-white hover:bg-white/10'
+            }`}
+          >
+            <Sliders className="w-3.5 h-3.5" />
+            <span>PiP Settings</span>
           </button>
         </div>
+
+        {/* Tab 1: Diagnostics */}
+        {activeTab === 'diagnostics' ? (
+          <>
+            <div className="flex-1 overflow-y-auto px-4 py-3 space-y-2.5">
+              {items.map((item) => (
+                <button
+                  key={item.id}
+                  onClick={() => handleCopyRow(item.value, item.title)}
+                  className="w-full flex items-center justify-between px-3.5 py-3 rounded-xl bg-white/[0.05] hover:bg-white/[0.09] active:bg-white/[0.14] border border-white/[0.06] transition-all text-left group"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="p-1.5 rounded-lg bg-black/30 group-hover:scale-105 transition-transform">
+                      {item.icon}
+                    </div>
+                    <span className="text-[13px] font-medium text-neutral-300">
+                      {item.title}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[13px] font-bold text-white font-mono tracking-tight">
+                      {item.value}
+                    </span>
+                  </div>
+                </button>
+              ))}
+            </div>
+
+            {/* Action Button: Run RAM Stress Test */}
+            <div className="px-4 pt-2 pb-3 shrink-0">
+              <button
+                onClick={() => {
+                  triggerHaptic('medium');
+                  onRunStressTest();
+                }}
+                className="w-full py-3 px-4 rounded-xl bg-red-600 hover:bg-red-500 active:bg-red-700 text-white font-bold text-[14px] shadow-lg shadow-red-950/40 transition-all flex items-center justify-center gap-2 active:scale-[0.98]"
+              >
+                <Flame className="w-4 h-4" />
+                <span>Run RAM Stress Test (OOM)</span>
+              </button>
+            </div>
+          </>
+        ) : (
+          /* Tab 2: PiP Customization Settings */
+          <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5 text-white">
+            {/* Live Preview Box */}
+            <div className="p-4 rounded-2xl bg-black/40 border border-white/10 flex flex-col items-center">
+              <div className="text-[11px] font-semibold text-neutral-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                <Eye className="w-3.5 h-3.5 text-cyan-400" />
+                Live PiP Preview
+              </div>
+              <div
+                style={{
+                  backgroundColor: settings.bgColor,
+                  opacity: settings.opacity,
+                  borderColor: settings.accentColor,
+                }}
+                className="w-36 rounded-[14px] p-2 border backdrop-blur-md shadow-lg flex flex-col items-center justify-center text-[11px] font-mono font-semibold transition-all"
+              >
+                {settings.showCpu && (
+                  <div className="flex items-center gap-1">
+                    <span className="text-white/70">CPU:</span>
+                    <span style={{ color: settings.accentColor }}>14.8%</span>
+                  </div>
+                )}
+                {settings.showRam && (
+                  <div className="flex items-center gap-1">
+                    <span className="text-white/70">RAM:</span>
+                    <span className="text-purple-300">52.4 MB</span>
+                  </div>
+                )}
+                {settings.showThermal && (
+                  <div className="flex items-center gap-1">
+                    <span className="text-white/70">Temp:</span>
+                    <span className="text-emerald-400">Normal</span>
+                  </div>
+                )}
+                {settings.showFps && (
+                  <div className="flex items-center gap-1">
+                    <span className="text-white/70">FPS:</span>
+                    <span className="text-emerald-400">60.0</span>
+                  </div>
+                )}
+                {settings.showModel && (
+                  <div className="flex items-center gap-1">
+                    <span className="text-white/70">Dev:</span>
+                    <span className="text-cyan-200">iPhone15</span>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* 1. Opacity Slider */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-bold text-neutral-200 flex items-center gap-2">
+                  <Sliders className="w-4 h-4 text-cyan-400" />
+                  Przeźroczystość nakładki PiP (Opacity)
+                </label>
+                <span className="text-xs font-mono font-bold text-cyan-300 bg-cyan-950/60 px-2 py-0.5 rounded-md border border-cyan-500/30">
+                  {Math.round(settings.opacity * 100)}%
+                </span>
+              </div>
+              <input
+                type="range"
+                min="0.2"
+                max="1.0"
+                step="0.05"
+                value={settings.opacity}
+                onChange={(e) =>
+                  onUpdateSettings({ ...settings, opacity: parseFloat(e.target.value) })
+                }
+                className="w-full h-2 bg-neutral-800 rounded-lg appearance-none cursor-pointer accent-cyan-400"
+              />
+              <div className="flex justify-between text-[10px] text-neutral-500 font-mono">
+                <span>20% (Bardzo przeźroczysty)</span>
+                <span>50%</span>
+                <span>80%</span>
+                <span>100% (Pełny)</span>
+              </div>
+            </div>
+
+            {/* 2. Custom Background Color */}
+            <div className="space-y-2.5">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-bold text-neutral-200 flex items-center gap-2">
+                  <Palette className="w-4 h-4 text-purple-400" />
+                  Dowolny kolor tła (Background Color)
+                </label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="color"
+                    value={settings.bgColor}
+                    onChange={(e) => onUpdateSettings({ ...settings, bgColor: e.target.value })}
+                    className="w-8 h-8 rounded-lg cursor-pointer bg-transparent border border-white/20 p-0.5"
+                    title="Wybierz dowolny kolor z palety RGB"
+                  />
+                  <span className="text-xs font-mono text-neutral-400">{settings.bgColor}</span>
+                </div>
+              </div>
+
+              {/* Preset Color Swatches */}
+              <div className="flex flex-wrap gap-2">
+                {COLOR_PRESETS.map((preset) => (
+                  <button
+                    key={preset.hex}
+                    onClick={() => {
+                      triggerHaptic('light');
+                      onUpdateSettings({ ...settings, bgColor: preset.hex });
+                    }}
+                    style={{ backgroundColor: preset.hex }}
+                    className={`px-2.5 py-1.5 rounded-lg text-[11px] font-semibold border flex items-center gap-1.5 transition-all ${
+                      settings.bgColor === preset.hex
+                        ? 'border-white ring-2 ring-white/50 text-white shadow-md scale-105'
+                        : 'border-white/20 text-neutral-300 hover:border-white/40'
+                    }`}
+                  >
+                    <span>{preset.name}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* 3. Accent Highlight Color */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-bold text-neutral-200">
+                  Kolor akcentu / wskaźników (Accent)
+                </label>
+                <input
+                  type="color"
+                  value={settings.accentColor}
+                  onChange={(e) => onUpdateSettings({ ...settings, accentColor: e.target.value })}
+                  className="w-7 h-7 rounded-lg cursor-pointer bg-transparent border border-white/20 p-0.5"
+                  title="Wybierz kolor akcentu"
+                />
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {ACCENT_PRESETS.map((acc) => (
+                  <button
+                    key={acc.hex}
+                    onClick={() => {
+                      triggerHaptic('light');
+                      onUpdateSettings({ ...settings, accentColor: acc.hex });
+                    }}
+                    style={{ backgroundColor: acc.hex }}
+                    className={`w-7 h-7 rounded-full border transition-all ${
+                      settings.accentColor === acc.hex
+                        ? 'border-white ring-2 ring-blue-400 scale-110 shadow-lg'
+                        : 'border-white/20 hover:scale-105'
+                    }`}
+                    title={acc.name}
+                  />
+                ))}
+              </div>
+            </div>
+
+            {/* 4. Selectable Display Info Toggles */}
+            <div className="space-y-2.5">
+              <label className="text-xs font-bold text-neutral-200 block">
+                Wyświetlane informacje w PiP (Display Items)
+              </label>
+
+              <div className="space-y-2">
+                {[
+                  {
+                    key: 'showCpu' as const,
+                    title: 'Użycie procesora (CPU Usage %)',
+                    desc: 'Obliczanie obciążenia rdzeni mach kernel',
+                  },
+                  {
+                    key: 'showRam' as const,
+                    title: 'Pamięć RAM aplikacji (RAM MB)',
+                    desc: 'task_basic_info resident memory size',
+                  },
+                  {
+                    key: 'showThermal' as const,
+                    title: 'Stan termiczny (Thermal State / Temp)',
+                    desc: 'Normal / Warm / Hot / Critical!',
+                  },
+                  {
+                    key: 'showFps' as const,
+                    title: 'Licznik klatek (Render FPS)',
+                    desc: 'Płynność renderowania klatek na sekundę',
+                  },
+                  {
+                    key: 'showModel' as const,
+                    title: 'Model urządzenia (Device Model)',
+                    desc: 'Identyfikator hw.machine (np. iPhone15,2)',
+                  },
+                ].map((item) => (
+                  <label
+                    key={item.key}
+                    className="flex items-center justify-between p-3 rounded-xl bg-white/[0.04] border border-white/10 hover:bg-white/[0.08] cursor-pointer transition-colors"
+                  >
+                    <div>
+                      <div className="text-xs font-semibold text-neutral-200">{item.title}</div>
+                      <div className="text-[10px] text-neutral-400">{item.desc}</div>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={settings[item.key]}
+                      onChange={(e) => {
+                        triggerHaptic('light');
+                        onUpdateSettings({ ...settings, [item.key]: e.target.checked });
+                      }}
+                      className="w-5 h-5 rounded-md accent-blue-500 cursor-pointer"
+                    />
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            {/* Reset Button */}
+            <button
+              onClick={handleResetSettings}
+              className="w-full py-2.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-neutral-300 text-xs font-semibold flex items-center justify-center gap-2 transition-colors active:scale-98"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>Przywróć domyślne ustawienia PiP</span>
+            </button>
+          </div>
+        )}
 
         {/* Footer: Created by Eksemekse-dev with AI + Planet/Globe GitHub Button */}
         <div className="flex items-center justify-between px-5 py-3.5 bg-black/40 border-t border-white/10 shrink-0">
