@@ -24,3 +24,15 @@ export interface DiagnosticItem {
   value: string;
   detail?: string;
 }
+
+export interface PipSettings {
+  opacity: number; // 0.2 to 1.0
+  bgColor: string; // hex color
+  accentColor: string; // hex color
+  showCpu: boolean;
+  showRam: boolean;
+  showThermal: boolean;
+  showFps: boolean;
+  showModel: boolean;
+}
+

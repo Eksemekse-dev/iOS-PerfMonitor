@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { TelemetryData, StressTestState } from './types.ts';
+import { TelemetryData, StressTestState, PipSettings } from './types.ts';
 import {
   getInitialDeviceInfo,
   calculateThermalState,
@@ -53,6 +53,37 @@ export default function App() {
   const [isDashboardOpen, setIsDashboardOpen] = useState<boolean>(false);
   const [isTutorialOpen, setIsTutorialOpen] = useState<boolean>(false);
   const [isSetupGuideOpen, setIsSetupGuideOpen] = useState<boolean>(false);
+
+  // PiP Customization Settings with localStorage persistence
+  const [pipSettings, setPipSettings] = useState<PipSettings>(() => {
+    try {
+      const saved = localStorage.getItem('perf_monitor_pip_settings');
+      if (saved) {
+        return JSON.parse(saved);
+      }
+    } catch {
+      // ignore
+    }
+    return {
+      opacity: 0.85,
+      bgColor: '#000000',
+      accentColor: '#38bdf8',
+      showCpu: true,
+      showRam: true,
+      showThermal: true,
+      showFps: false,
+      showModel: false,
+    };
+  });
+
+  const handleUpdateSettings = (newSettings: PipSettings) => {
+    setPipSettings(newSettings);
+    try {
+      localStorage.setItem('perf_monitor_pip_settings', JSON.stringify(newSettings));
+    } catch {
+      // ignore
+    }
+  };
 
   // Alerts
   const [alertState, setAlertState] = useState<{
@@ -357,6 +388,7 @@ export default function App() {
               {/* Floating PiP Monitor inside Phone Container */}
               <FloatingPiP
                 telemetry={telemetry}
+                settings={pipSettings}
                 visible={isPipVisible}
                 onOpenDashboard={() => setIsDashboardOpen(true)}
                 onToggleVisible={() => setIsPipVisible(false)}
@@ -382,6 +414,7 @@ export default function App() {
 
             <FloatingPiP
               telemetry={telemetry}
+              settings={pipSettings}
               visible={isPipVisible}
               onOpenDashboard={() => setIsDashboardOpen(true)}
               onToggleVisible={() => setIsPipVisible(false)}
@@ -394,9 +427,11 @@ export default function App() {
       {/* Fullscreen Diagnostic Dashboard Modal */}
       <DashboardModal
         telemetry={telemetry}
+        settings={pipSettings}
         isOpen={isDashboardOpen}
         onClose={() => setIsDashboardOpen(false)}
         onRunStressTest={() => setAlertState({ isOpen: true, type: 'confirm' })}
+        onUpdateSettings={handleUpdateSettings}
       />
 
       {/* 4-Finger Touch Tutorial Overlay */}
