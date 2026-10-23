@@ -5,6 +5,7 @@
 #include <unistd.h>
 #include <dlfcn.h>
 
+// ===== Color helper =====
 static inline UIColor *getPerfColorForIndex(NSInteger idx, CGFloat alpha) {
     switch (idx) {
         case 1: return [[UIColor colorWithRed:0.06 green:0.09 blue:0.18 alpha:1.0] colorWithAlphaComponent:alpha];
@@ -14,6 +15,43 @@ static inline UIColor *getPerfColorForIndex(NSInteger idx, CGFloat alpha) {
         case 5: return [[UIColor colorWithRed:0.28 green:0.04 blue:0.04 alpha:1.0] colorWithAlphaComponent:alpha];
         default: return [[UIColor blackColor] colorWithAlphaComponent:alpha];
     }
+}
+
+// ===== Liquid Glass helpers =====
+static UIVisualEffect *PerfGlassEffect(BOOL dark) {
+    Class glassClass = NSClassFromString(@"UIGlassEffect");
+    if (glassClass) {
+        @try {
+            SEL sel = NSSelectorFromString(@"effectWithStyle:");
+            if ([glassClass respondsToSelector:sel]) {
+                typedef id (*F)(id, SEL, NSInteger);
+                F f = (F)[glassClass methodForSelector:sel];
+                id e = f(glassClass, sel, 0);
+                if ([e isKindOfClass:[UIVisualEffect class]]) return (UIVisualEffect *)e;
+            }
+            id e = [[glassClass alloc] init];
+            if ([e isKindOfClass:[UIVisualEffect class]]) return (UIVisualEffect *)e;
+        } @catch (NSException *ex) { NSLog(@"[PerfMonitor] UIGlassEffect err: %@", ex); }
+    }
+    if (@available(iOS 13.0, *)) {
+        return [UIBlurEffect effectWithStyle:dark ? UIBlurEffectStyleSystemThinMaterialDark : UIBlurEffectStyleSystemThinMaterialLight];
+    }
+    return [UIBlurEffect effectWithStyle:UIBlurEffectStyleDark];
+}
+
+static UIVisualEffectView *PerfGlassPanel(CGRect frame, CGFloat cr, BOOL dark) {
+    UIVisualEffectView *p = [[UIVisualEffectView alloc] initWithEffect:PerfGlassEffect(dark)];
+    p.frame = frame;
+    p.layer.cornerRadius = cr;
+    p.layer.masksToBounds = YES;
+    p.layer.borderWidth = 0.8;
+    p.layer.borderColor = (dark
+        ? [[UIColor whiteColor] colorWithAlphaComponent:0.15]
+        : [[UIColor whiteColor] colorWithAlphaComponent:0.5]).CGColor;
+    p.contentView.backgroundColor = dark
+        ? [UIColor colorWithWhite:1.0 alpha:0.05]
+        : [UIColor colorWithWhite:1.0 alpha:0.15];
+    return p;
 }
 
 // ===== TUTORIAL =====
@@ -321,7 +359,7 @@ static UIWindow *tutorialWindow = nil;
 
 @end
 
-// ===== SECRET MENU (SwiftUI port) =====
+// ===== SECRET MENU (Liquid Glass + Dark Mode) =====
 @interface PerfFullScreenMenuView : UIView
 @property (nonatomic, copy) void (^onClose)(void);
 @property (nonatomic, copy) void (^onRunTest)(void);
@@ -329,11 +367,15 @@ static UIWindow *tutorialWindow = nil;
 @end
 
 @implementation PerfFullScreenMenuView {
+    UIVisualEffectView *_bgGlass;
+    UILabel *_titleLabel;
+    UILabel *_footerLabel;
     UIButton *_diagTabButton;
     UIButton *_settingsTabButton;
     UIScrollView *_diagScrollView;
     UIView *_settingsContainerView;
     UIButton *_testButton;
+    UIButton *_githubButton;
     UILabel *_opacityValueLabel;
     UISlider *_opacitySlider;
     UILabel *_sizeValueLabel;
@@ -344,195 +386,214 @@ static UIWindow *tutorialWindow = nil;
 }
 
 - (UIColor *)perfTeal { return [UIColor colorWithRed:0.0 green:0.78 blue:0.70 alpha:1.0]; }
+- (BOOL)isDarkMode { return [[NSUserDefaults standardUserDefaults] boolForKey:@"perf_dark_mode"]; }
 
 - (instancetype)initWithFrame:(CGRect)frame {
     if (self = [super initWithFrame:frame]) {
-        self.backgroundColor = [UIColor whiteColor];
         _isDiagTab = YES;
-        UIEdgeInsets safeInsets = UIEdgeInsetsZero;
-        if (@available(iOS 13.0, *)) {
-            for (UIWindowScene *scene in [UIApplication sharedApplication].connectedScenes) {
-                if ([scene isKindOfClass:[UIWindowScene class]]) {
-                    UIWindow *window = scene.windows.firstObject;
-                    if (window) { safeInsets = window.safeAreaInsets; break; }
-                }
-            }
-        }
-        CGFloat topY = safeInsets.top > 0 ? safeInsets.top + 10 : 40;
-        CGFloat bottomY = frame.size.height - (safeInsets.bottom > 0 ? safeInsets.bottom + 15 : 25);
-        CGFloat L = 24, R = 24;
-        CGFloat contentW = frame.size.width - L - R;
-
-        UILabel *titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(L, topY, contentW - 130, 42)];
-        titleLabel.text = @"Secret Menu";
-        titleLabel.textColor = [UIColor blackColor];
-        titleLabel.font = [UIFont systemFontOfSize:32 weight:UIFontWeightHeavy];
-        titleLabel.adjustsFontSizeToFitWidth = YES;
-        titleLabel.minimumScaleFactor = 0.7;
-        [self addSubview:titleLabel];
-
-        UIButton *closeButton = [UIButton buttonWithType:UIButtonTypeCustom];
-        closeButton.frame = CGRectMake(frame.size.width - R - 50, topY + 2, 50, 50);
-        closeButton.backgroundColor = [self perfTeal];
-        closeButton.layer.cornerRadius = 25;
-        [closeButton setTitle:@"✕" forState:UIControlStateNormal];
-        [closeButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-        closeButton.titleLabel.font = [UIFont systemFontOfSize:22 weight:UIFontWeightBold];
-        [closeButton addTarget:self action:@selector(closeTapped) forControlEvents:UIControlEventTouchUpInside];
-        [self addSubview:closeButton];
-
-        UIButton *shareButton = [UIButton buttonWithType:UIButtonTypeCustom];
-        shareButton.frame = CGRectMake(frame.size.width - R - 50 - 8 - 50, topY + 2, 50, 50);
-        shareButton.backgroundColor = [self perfTeal];
-        shareButton.layer.cornerRadius = 25;
-        [shareButton setTitle:@"⬆" forState:UIControlStateNormal];
-        [shareButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-        shareButton.titleLabel.font = [UIFont systemFontOfSize:22 weight:UIFontWeightBold];
-        [shareButton addTarget:self action:@selector(shareTapped) forControlEvents:UIControlEventTouchUpInside];
-        [self addSubview:shareButton];
-
-        CGFloat tabY = topY + 66;
-        CGFloat tabW = (contentW - 12) / 2.0;
-
-        _diagTabButton = [UIButton buttonWithType:UIButtonTypeCustom];
-        _diagTabButton.frame = CGRectMake(L, tabY, tabW, 50);
-        _diagTabButton.backgroundColor = [self perfTeal];
-        _diagTabButton.layer.cornerRadius = 25;
-        [_diagTabButton setTitle:@"Diagnostics" forState:UIControlStateNormal];
-        [_diagTabButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-        _diagTabButton.titleLabel.font = [UIFont systemFontOfSize:17 weight:UIFontWeightSemibold];
-        [_diagTabButton addTarget:self action:@selector(diagTabTapped) forControlEvents:UIControlEventTouchUpInside];
-        [self addSubview:_diagTabButton];
-
-        _settingsTabButton = [UIButton buttonWithType:UIButtonTypeCustom];
-        _settingsTabButton.frame = CGRectMake(L + tabW + 12, tabY, tabW, 50);
-        _settingsTabButton.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.04];
-        _settingsTabButton.layer.cornerRadius = 25;
-        [_settingsTabButton setTitle:@"PiP Settings" forState:UIControlStateNormal];
-        [_settingsTabButton setTitleColor:[UIColor blackColor] forState:UIControlStateNormal];
-        _settingsTabButton.titleLabel.font = [UIFont systemFontOfSize:17 weight:UIFontWeightSemibold];
-        [_settingsTabButton addTarget:self action:@selector(settingsTabTapped) forControlEvents:UIControlEventTouchUpInside];
-        [self addSubview:_settingsTabButton];
-
-        CGFloat contentY = tabY + 60;
-        CGFloat contentH = (bottomY - 120) - contentY;
-
-        size_t modelSize;
-        sysctlbyname("hw.machine", NULL, &modelSize, NULL, 0);
-        char *machine = malloc(modelSize);
-        sysctlbyname("hw.machine", machine, &modelSize, NULL, 0);
-        NSString *deviceModel = [NSString stringWithUTF8String:machine];
-        free(machine);
-
-        int mib[4] = { CTL_KERN, KERN_PROC, KERN_PROC_PID, getpid() };
-        struct kinfo_proc kinfo;
-        size_t ksize = sizeof(kinfo);
-        BOOL debuggerAttached = NO;
-        if (sysctl(mib, 4, &kinfo, &ksize, NULL, 0) == 0) {
-            debuggerAttached = ((kinfo.kp_proc.p_flag & P_TRACED) != 0);
-        }
-
-        struct task_basic_info taskInfo;
-        mach_msg_type_number_t tSize = TASK_BASIC_INFO_COUNT;
-        task_info(mach_task_self(), TASK_BASIC_INFO, (task_info_t)&taskInfo, &tSize);
-        double appRamMB = taskInfo.resident_size / (1024.0 * 1024.0);
-        unsigned long long totalDeviceRam = [[NSProcessInfo processInfo] physicalMemory] / (1024 * 1024);
-        NSString *bundleId = [[NSBundle mainBundle] bundleIdentifier] ?: @"Unknown";
-        NSString *iosVersion = [[UIDevice currentDevice] systemVersion];
-
-        BOOL jitEnabled = debuggerAttached;
-        typedef int (*csops_t)(pid_t, unsigned int, void*, size_t);
-        csops_t csops_ptr = (csops_t)dlsym(RTLD_DEFAULT, "csops");
-        if (csops_ptr) {
-            uint32_t csFlags = 0;
-            if (csops_ptr(getpid(), 0, &csFlags, sizeof(csFlags)) == 0) {
-                jitEnabled = ((csFlags & 0x10000000) != 0);
-            }
-        }
-
-        self.shareSummaryText = [NSString stringWithFormat:
-                                 @"📊 PerfMonitor Diagnostics\n------------------------\nDevice Model: %@\niOS Version: %@\nBundle ID: %@\nDebugger Attached: %@\nJIT: %@\nMemory+ Kernel: Active\nApp RAM Usage: %.1f MB\nTotal Device RAM: %llu MB",
-                                 deviceModel, iosVersion, bundleId,
-                                 debuggerAttached ? @"Yes" : @"No",
-                                 jitEnabled ? @"Enabled" : @"Disabled",
-                                 appRamMB, totalDeviceRam];
-
-        _diagScrollView = [[UIScrollView alloc] initWithFrame:CGRectMake(L, contentY, contentW, contentH)];
-        _diagScrollView.showsVerticalScrollIndicator = NO;
-        [self addSubview:_diagScrollView];
-
-        NSArray *items = @[
-            @{@"title": @"Device Model",     @"value": deviceModel},
-            @{@"title": @"iOS Version",      @"value": iosVersion},
-            @{@"title": @"Bundle ID",        @"value": bundleId},
-            @{@"title": @"Memory+ Kernel",   @"value": @"Active"},
-            @{@"title": @"App RAM Usage",    @"value": [NSString stringWithFormat:@"%.1f MB", appRamMB]},
-            @{@"title": @"Total Device RAM", @"value": [NSString stringWithFormat:@"%llu MB", totalDeviceRam]},
-            @{@"title": @"JIT",              @"value": jitEnabled ? @"Enabled" : @"Disabled"}
-        ];
-
-        CGFloat rowH = 49, rowGap = 9, yOff = 0;
-        for (NSDictionary *item in items) {
-            UIView *row = [self createRowWithTitle:item[@"title"] value:item[@"value"] width:contentW height:rowH];
-            row.frame = CGRectMake(0, yOff, contentW, rowH);
-            UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(rowTapped:)];
-            [row addGestureRecognizer:tap];
-            [_diagScrollView addSubview:row];
-            yOff += rowH + rowGap;
-        }
-        _diagScrollView.contentSize = CGSizeMake(contentW, yOff);
-
-        _settingsContainerView = [[UIView alloc] initWithFrame:CGRectMake(L, contentY, contentW, contentH)];
-        _settingsContainerView.hidden = YES;
-        [self addSubview:_settingsContainerView];
-        [self buildSettingsUIInView:_settingsContainerView width:contentW height:contentH];
-
-        _testButton = [UIButton buttonWithType:UIButtonTypeCustom];
-        _testButton.frame = CGRectMake(L, bottomY - 118, contentW, 55);
-        _testButton.backgroundColor = [UIColor colorWithRed:1.0 green:0.0 blue:0.02 alpha:1.0];
-        _testButton.layer.cornerRadius = 27.5;
-        _testButton.layer.borderWidth = 0.5;
-        _testButton.layer.borderColor = [UIColor colorWithRed:1.0 green:0.18 blue:0.18 alpha:1.0].CGColor;
-        [_testButton setTitle:@"Run RAM Stress Test (OOM)" forState:UIControlStateNormal];
-        [_testButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-        _testButton.titleLabel.font = [UIFont systemFontOfSize:17 weight:UIFontWeightSemibold];
-        [_testButton addTarget:self action:@selector(runStressTestTapped) forControlEvents:UIControlEventTouchUpInside];
-        [self addSubview:_testButton];
-
-        UIButton *githubButton = [UIButton buttonWithType:UIButtonTypeCustom];
-        githubButton.frame = CGRectMake(frame.size.width - R - 98, bottomY - 52, 98, 50);
-        githubButton.backgroundColor = [self perfTeal];
-        githubButton.layer.cornerRadius = 25;
-        [githubButton setTitle:@"GitHub" forState:UIControlStateNormal];
-        [githubButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-        githubButton.titleLabel.font = [UIFont systemFontOfSize:17 weight:UIFontWeightSemibold];
-        [githubButton addTarget:self action:@selector(openGithubTapped) forControlEvents:UIControlEventTouchUpInside];
-        [self addSubview:githubButton];
-
-        UILabel *footerLabel = [[UILabel alloc] initWithFrame:CGRectMake(L, bottomY - 52, contentW - 108, 50)];
-        footerLabel.text = @"Created by Eksemekse-dev with AI, Version 3.0";
-        footerLabel.textColor = [UIColor blackColor];
-        footerLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightHeavy];
-        footerLabel.numberOfLines = 2;
-        [self addSubview:footerLabel];
+        [self buildUI:frame];
+        [self refreshTheme];
     }
     return self;
 }
 
-- (UIView *)createRowWithTitle:(NSString *)title value:(NSString *)value width:(CGFloat)width height:(CGFloat)height {
-    UIView *row = [[UIView alloc] initWithFrame:CGRectMake(0, 0, width, height)];
-    row.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.04];
-    row.layer.cornerRadius = 23;
+- (void)buildUI:(CGRect)frame {
+    BOOL dark = [self isDarkMode];
+
+    _bgGlass = [[UIVisualEffectView alloc] initWithEffect:PerfGlassEffect(dark)];
+    _bgGlass.frame = self.bounds;
+    _bgGlass.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    [self addSubview:_bgGlass];
+
+    UIEdgeInsets safe = UIEdgeInsetsZero;
+    if (@available(iOS 13.0, *)) {
+        for (UIWindowScene *s in [UIApplication sharedApplication].connectedScenes) {
+            if ([s isKindOfClass:[UIWindowScene class]]) {
+                UIWindow *w = s.windows.firstObject;
+                if (w) { safe = w.safeAreaInsets; break; }
+            }
+        }
+    }
+    CGFloat topY = safe.top > 0 ? safe.top + 10 : 40;
+    CGFloat bottomY = frame.size.height - (safe.bottom > 0 ? safe.bottom + 15 : 25);
+    CGFloat L = 24, R = 24;
+    CGFloat contentW = frame.size.width - L - R;
+
+    _titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(L, topY, contentW - 130, 42)];
+    _titleLabel.text = @"Secret Menu";
+    _titleLabel.font = [UIFont systemFontOfSize:32 weight:UIFontWeightHeavy];
+    _titleLabel.adjustsFontSizeToFitWidth = YES;
+    _titleLabel.minimumScaleFactor = 0.7;
+    [self addSubview:_titleLabel];
+
+    UIButton *closeButton = [UIButton buttonWithType:UIButtonTypeCustom];
+    closeButton.frame = CGRectMake(frame.size.width - R - 50, topY + 2, 50, 50);
+    closeButton.backgroundColor = [self perfTeal];
+    closeButton.layer.cornerRadius = 25;
+    closeButton.layer.borderWidth = 0.8;
+    closeButton.layer.borderColor = [[UIColor whiteColor] colorWithAlphaComponent:0.4].CGColor;
+    [closeButton setTitle:@"✕" forState:UIControlStateNormal];
+    [closeButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    closeButton.titleLabel.font = [UIFont systemFontOfSize:22 weight:UIFontWeightBold];
+    [closeButton addTarget:self action:@selector(closeTapped) forControlEvents:UIControlEventTouchUpInside];
+    [self addSubview:closeButton];
+
+    UIButton *shareButton = [UIButton buttonWithType:UIButtonTypeCustom];
+    shareButton.frame = CGRectMake(frame.size.width - R - 50 - 8 - 50, topY + 2, 50, 50);
+    shareButton.backgroundColor = [self perfTeal];
+    shareButton.layer.cornerRadius = 25;
+    shareButton.layer.borderWidth = 0.8;
+    shareButton.layer.borderColor = [[UIColor whiteColor] colorWithAlphaComponent:0.4].CGColor;
+    [shareButton setTitle:@"⬆" forState:UIControlStateNormal];
+    [shareButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    shareButton.titleLabel.font = [UIFont systemFontOfSize:22 weight:UIFontWeightBold];
+    [shareButton addTarget:self action:@selector(shareTapped) forControlEvents:UIControlEventTouchUpInside];
+    [self addSubview:shareButton];
+
+    CGFloat tabY = topY + 66;
+    CGFloat tabW = (contentW - 12) / 2.0;
+    _diagTabButton = [UIButton buttonWithType:UIButtonTypeCustom];
+    _diagTabButton.frame = CGRectMake(L, tabY, tabW, 50);
+    _diagTabButton.layer.cornerRadius = 25;
+    _diagTabButton.layer.borderWidth = 0.6;
+    _diagTabButton.layer.borderColor = [[UIColor whiteColor] colorWithAlphaComponent:0.3].CGColor;
+    [_diagTabButton setTitle:@"Diagnostics" forState:UIControlStateNormal];
+    _diagTabButton.titleLabel.font = [UIFont systemFontOfSize:17 weight:UIFontWeightSemibold];
+    [_diagTabButton addTarget:self action:@selector(diagTabTapped) forControlEvents:UIControlEventTouchUpInside];
+    [self addSubview:_diagTabButton];
+
+    _settingsTabButton = [UIButton buttonWithType:UIButtonTypeCustom];
+    _settingsTabButton.frame = CGRectMake(L + tabW + 12, tabY, tabW, 50);
+    _settingsTabButton.layer.cornerRadius = 25;
+    _settingsTabButton.layer.borderWidth = 0.6;
+    _settingsTabButton.layer.borderColor = [[UIColor whiteColor] colorWithAlphaComponent:0.3].CGColor;
+    [_settingsTabButton setTitle:@"PiP Settings" forState:UIControlStateNormal];
+    _settingsTabButton.titleLabel.font = [UIFont systemFontOfSize:17 weight:UIFontWeightSemibold];
+    [_settingsTabButton addTarget:self action:@selector(settingsTabTapped) forControlEvents:UIControlEventTouchUpInside];
+    [self addSubview:_settingsTabButton];
+
+    CGFloat contentY = tabY + 60;
+    CGFloat contentH = (bottomY - 120) - contentY;
+
+    size_t modelSize;
+    sysctlbyname("hw.machine", NULL, &modelSize, NULL, 0);
+    char *machine = malloc(modelSize);
+    sysctlbyname("hw.machine", machine, &modelSize, NULL, 0);
+    NSString *deviceModel = [NSString stringWithUTF8String:machine];
+    free(machine);
+
+    int mib[4] = { CTL_KERN, KERN_PROC, KERN_PROC_PID, getpid() };
+    struct kinfo_proc kinfo;
+    size_t ksize = sizeof(kinfo);
+    BOOL debuggerAttached = NO;
+    if (sysctl(mib, 4, &kinfo, &ksize, NULL, 0) == 0) {
+        debuggerAttached = ((kinfo.kp_proc.p_flag & P_TRACED) != 0);
+    }
+
+    struct task_basic_info taskInfo;
+    mach_msg_type_number_t tSize = TASK_BASIC_INFO_COUNT;
+    task_info(mach_task_self(), TASK_BASIC_INFO, (task_info_t)&taskInfo, &tSize);
+    double appRamMB = taskInfo.resident_size / (1024.0 * 1024.0);
+    unsigned long long totalDeviceRam = [[NSProcessInfo processInfo] physicalMemory] / (1024 * 1024);
+    NSString *bundleId = [[NSBundle mainBundle] bundleIdentifier] ?: @"Unknown";
+    NSString *iosVersion = [[UIDevice currentDevice] systemVersion];
+
+    BOOL jitEnabled = debuggerAttached;
+    typedef int (*csops_t)(pid_t, unsigned int, void*, size_t);
+    csops_t csops_ptr = (csops_t)dlsym(RTLD_DEFAULT, "csops");
+    if (csops_ptr) {
+        uint32_t csFlags = 0;
+        if (csops_ptr(getpid(), 0, &csFlags, sizeof(csFlags)) == 0) {
+            jitEnabled = ((csFlags & 0x10000000) != 0);
+        }
+    }
+
+    self.shareSummaryText = [NSString stringWithFormat:
+        @"📊 PerfMonitor Diagnostics\n------------------------\nDevice Model: %@\niOS Version: %@\nBundle ID: %@\nDebugger Attached: %@\nJIT: %@\nMemory+ Kernel: Active\nApp RAM Usage: %.1f MB\nTotal Device RAM: %llu MB",
+        deviceModel, iosVersion, bundleId,
+        debuggerAttached ? @"Yes" : @"No",
+        jitEnabled ? @"Enabled" : @"Disabled",
+        appRamMB, totalDeviceRam];
+
+    _diagScrollView = [[UIScrollView alloc] initWithFrame:CGRectMake(L, contentY, contentW, contentH)];
+    _diagScrollView.showsVerticalScrollIndicator = NO;
+    [self addSubview:_diagScrollView];
+
+    NSArray *items = @[
+        @{@"title": @"Device Model",     @"value": deviceModel},
+        @{@"title": @"iOS Version",      @"value": iosVersion},
+        @{@"title": @"Bundle ID",        @"value": bundleId},
+        @{@"title": @"Memory+ Kernel",   @"value": @"Active"},
+        @{@"title": @"App RAM Usage",    @"value": [NSString stringWithFormat:@"%.1f MB", appRamMB]},
+        @{@"title": @"Total Device RAM", @"value": [NSString stringWithFormat:@"%llu MB", totalDeviceRam]},
+        @{@"title": @"JIT",              @"value": jitEnabled ? @"Enabled" : @"Disabled"}
+    ];
+
+    CGFloat rowH = 49, rowGap = 9, yOff = 0;
+    for (NSDictionary *item in items) {
+        UIView *row = [self makeRowTitle:item[@"title"] value:item[@"value"] width:contentW height:rowH];
+        row.frame = CGRectMake(0, yOff, contentW, rowH);
+        UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(rowTapped:)];
+        [row addGestureRecognizer:tap];
+        [_diagScrollView addSubview:row];
+        yOff += rowH + rowGap;
+    }
+    _diagScrollView.contentSize = CGSizeMake(contentW, yOff);
+
+    _settingsContainerView = [[UIView alloc] initWithFrame:CGRectMake(L, contentY, contentW, contentH)];
+    _settingsContainerView.hidden = YES;
+    [self addSubview:_settingsContainerView];
+    [self buildSettingsInContainer:_settingsContainerView width:contentW height:contentH];
+
+    _testButton = [UIButton buttonWithType:UIButtonTypeCustom];
+    _testButton.frame = CGRectMake(L, bottomY - 118, contentW, 55);
+    _testButton.backgroundColor = [UIColor colorWithRed:1.0 green:0.0 blue:0.02 alpha:1.0];
+    _testButton.layer.cornerRadius = 27.5;
+    _testButton.layer.borderWidth = 0.6;
+    _testButton.layer.borderColor = [UIColor colorWithRed:1.0 green:0.35 blue:0.35 alpha:1.0].CGColor;
+    [_testButton setTitle:@"Run RAM Stress Test (OOM)" forState:UIControlStateNormal];
+    [_testButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    _testButton.titleLabel.font = [UIFont systemFontOfSize:17 weight:UIFontWeightSemibold];
+    [_testButton addTarget:self action:@selector(runStressTestTapped) forControlEvents:UIControlEventTouchUpInside];
+    [self addSubview:_testButton];
+
+    _githubButton = [UIButton buttonWithType:UIButtonTypeCustom];
+    _githubButton.frame = CGRectMake(frame.size.width - R - 98, bottomY - 52, 98, 50);
+    _githubButton.backgroundColor = [self perfTeal];
+    _githubButton.layer.cornerRadius = 25;
+    _githubButton.layer.borderWidth = 0.8;
+    _githubButton.layer.borderColor = [[UIColor whiteColor] colorWithAlphaComponent:0.4].CGColor;
+    [_githubButton setTitle:@"GitHub" forState:UIControlStateNormal];
+    [_githubButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    _githubButton.titleLabel.font = [UIFont systemFontOfSize:17 weight:UIFontWeightSemibold];
+    [_githubButton addTarget:self action:@selector(openGithubTapped) forControlEvents:UIControlEventTouchUpInside];
+    [self addSubview:_githubButton];
+
+    _footerLabel = [[UILabel alloc] initWithFrame:CGRectMake(L, bottomY - 52, contentW - 108, 50)];
+    _footerLabel.text = @"Created by Eksemekse-dev with AI, Version 3.0";
+    _footerLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightHeavy];
+    _footerLabel.numberOfLines = 2;
+    [self addSubview:_footerLabel];
+}
+
+- (UIView *)makeRowTitle:(NSString *)title value:(NSString *)value width:(CGFloat)width height:(CGFloat)height {
+    BOOL dark = [self isDarkMode];
+    UIVisualEffectView *row = PerfGlassPanel(CGRectMake(0, 0, width, height), 23, dark);
     row.userInteractionEnabled = YES;
+    UIColor *textColor = dark ? [UIColor whiteColor] : [UIColor blackColor];
+    UIColor *secondary = dark ? [[UIColor whiteColor] colorWithAlphaComponent:0.75] : [[UIColor blackColor] colorWithAlphaComponent:0.7];
+
     UILabel *titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(16, 0, width * 0.52, height)];
     titleLabel.text = title;
-    titleLabel.textColor = [UIColor blackColor];
+    titleLabel.textColor = textColor;
     titleLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightHeavy];
+    titleLabel.tag = 2001;
     titleLabel.userInteractionEnabled = NO;
-    [row addSubview:titleLabel];
+    [row.contentView addSubview:titleLabel];
+
     UILabel *valueLabel = [[UILabel alloc] initWithFrame:CGRectMake(width * 0.52, 0, width * 0.48 - 16, height)];
     valueLabel.text = value;
-    valueLabel.textColor = [UIColor blackColor];
+    valueLabel.textColor = secondary;
     valueLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
     valueLabel.textAlignment = NSTextAlignmentRight;
     valueLabel.adjustsFontSizeToFitWidth = YES;
@@ -540,11 +601,14 @@ static UIWindow *tutorialWindow = nil;
     valueLabel.lineBreakMode = NSLineBreakByTruncatingMiddle;
     valueLabel.tag = 999;
     valueLabel.userInteractionEnabled = NO;
-    [row addSubview:valueLabel];
+    [row.contentView addSubview:valueLabel];
+
     return row;
 }
 
-- (void)buildSettingsUIInView:(UIView *)container width:(CGFloat)width height:(CGFloat)height {
+- (void)buildSettingsInContainer:(UIView *)container width:(CGFloat)width height:(CGFloat)height {
+    BOOL dark = [self isDarkMode];
+    UIColor *textColor = dark ? [UIColor whiteColor] : [UIColor blackColor];
     UIScrollView *scroll = [[UIScrollView alloc] initWithFrame:CGRectMake(0, 0, width, height)];
     scroll.showsVerticalScrollIndicator = NO;
     [container addSubview:scroll];
@@ -558,17 +622,14 @@ static UIWindow *tutorialWindow = nil;
 
     CGFloat sY = 0;
 
-    UIView *previewBox = [[UIView alloc] initWithFrame:CGRectMake(0, sY, width, 110)];
-    previewBox.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.04];
-    previewBox.layer.cornerRadius = 23;
-    previewBox.clipsToBounds = YES;
+    UIVisualEffectView *previewBox = PerfGlassPanel(CGRectMake(0, sY, width, 110), 23, dark);
     [scroll addSubview:previewBox];
 
     UILabel *previewTitle = [[UILabel alloc] initWithFrame:CGRectMake(16, 8, width - 32, 16)];
     previewTitle.text = @"LIVE PIP PREVIEW";
     previewTitle.textColor = [self perfTeal];
     previewTitle.font = [UIFont systemFontOfSize:11 weight:UIFontWeightHeavy];
-    [previewBox addSubview:previewTitle];
+    [previewBox.contentView addSubview:previewTitle];
 
     _previewPipView = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 142, 56)];
     _previewPipView.center = CGPointMake(width / 2.0, 72);
@@ -578,7 +639,7 @@ static UIWindow *tutorialWindow = nil;
     _previewPipView.layer.borderColor = [[UIColor whiteColor] colorWithAlphaComponent:0.3].CGColor;
     _previewPipView.backgroundColor = getPerfColorForIndex(curColorIdx, curOpacity);
     _previewPipView.transform = CGAffineTransformMakeScale(curScale, curScale);
-    [previewBox addSubview:_previewPipView];
+    [previewBox.contentView addSubview:_previewPipView];
 
     _previewInfoLabel = [[UILabel alloc] initWithFrame:_previewPipView.bounds];
     _previewInfoLabel.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
@@ -593,8 +654,9 @@ static UIWindow *tutorialWindow = nil;
 
     UILabel *szTitle = [[UILabel alloc] initWithFrame:CGRectMake(4, sY, width - 80, 20)];
     szTitle.text = @"PiP Size";
-    szTitle.textColor = [UIColor blackColor];
+    szTitle.textColor = textColor;
     szTitle.font = [UIFont systemFontOfSize:14 weight:UIFontWeightHeavy];
+    szTitle.tag = 3001;
     [scroll addSubview:szTitle];
 
     _sizeValueLabel = [[UILabel alloc] initWithFrame:CGRectMake(width - 70, sY, 66, 20)];
@@ -602,6 +664,7 @@ static UIWindow *tutorialWindow = nil;
     _sizeValueLabel.textColor = [self perfTeal];
     _sizeValueLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightHeavy];
     _sizeValueLabel.textAlignment = NSTextAlignmentRight;
+    _sizeValueLabel.tag = 3002;
     [scroll addSubview:_sizeValueLabel];
     sY += 26;
 
@@ -616,8 +679,9 @@ static UIWindow *tutorialWindow = nil;
 
     UILabel *opTitle = [[UILabel alloc] initWithFrame:CGRectMake(4, sY, width - 80, 20)];
     opTitle.text = @"PiP Opacity";
-    opTitle.textColor = [UIColor blackColor];
+    opTitle.textColor = textColor;
     opTitle.font = [UIFont systemFontOfSize:14 weight:UIFontWeightHeavy];
+    opTitle.tag = 3001;
     [scroll addSubview:opTitle];
 
     _opacityValueLabel = [[UILabel alloc] initWithFrame:CGRectMake(width - 70, sY, 66, 20)];
@@ -625,6 +689,7 @@ static UIWindow *tutorialWindow = nil;
     _opacityValueLabel.textColor = [self perfTeal];
     _opacityValueLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightHeavy];
     _opacityValueLabel.textAlignment = NSTextAlignmentRight;
+    _opacityValueLabel.tag = 3002;
     [scroll addSubview:_opacityValueLabel];
     sY += 26;
 
@@ -639,8 +704,9 @@ static UIWindow *tutorialWindow = nil;
 
     UILabel *colTitle = [[UILabel alloc] initWithFrame:CGRectMake(4, sY, width - 8, 20)];
     colTitle.text = @"PiP Background Color";
-    colTitle.textColor = [UIColor blackColor];
+    colTitle.textColor = textColor;
     colTitle.font = [UIFont systemFontOfSize:14 weight:UIFontWeightHeavy];
+    colTitle.tag = 3001;
     [scroll addSubview:colTitle];
     sY += 26;
 
@@ -655,7 +721,7 @@ static UIWindow *tutorialWindow = nil;
         colBtn.backgroundColor = getPerfColorForIndex(i, 0.95);
         colBtn.layer.cornerRadius = 10;
         colBtn.layer.borderWidth = (i == curColorIdx) ? 2.5 : 1.0;
-        colBtn.layer.borderColor = (i == curColorIdx) ? [self perfTeal].CGColor : [[UIColor whiteColor] colorWithAlphaComponent:0.2].CGColor;
+        colBtn.layer.borderColor = (i == curColorIdx) ? [self perfTeal].CGColor : [[UIColor whiteColor] colorWithAlphaComponent:0.25].CGColor;
         [colBtn setTitle:colorNames[i] forState:UIControlStateNormal];
         colBtn.titleLabel.font = [UIFont systemFontOfSize:11 weight:UIFontWeightBold];
         colBtn.tag = 100 + i;
@@ -665,27 +731,33 @@ static UIWindow *tutorialWindow = nil;
     sY += (btnH + 8) * 2 + 12;
 
     UILabel *metricsTitle = [[UILabel alloc] initWithFrame:CGRectMake(4, sY, width - 8, 20)];
-    metricsTitle.text = @"Visible Metrics";
-    metricsTitle.textColor = [UIColor blackColor];
+    metricsTitle.text = @"Visible Metrics & Theme";
+    metricsTitle.textColor = textColor;
     metricsTitle.font = [UIFont systemFontOfSize:14 weight:UIFontWeightHeavy];
+    metricsTitle.tag = 3001;
     [scroll addSubview:metricsTitle];
     sY += 26;
 
     NSArray *switchesConfig = @[
-        @{@"key": @"perf_show_cpu",  @"label": @"Show CPU Usage",     @"def": @YES},
-        @{@"key": @"perf_show_ram",  @"label": @"Show RAM Usage",     @"def": @YES},
-        @{@"key": @"perf_show_temp", @"label": @"Show Thermal State", @"def": @YES},
-        @{@"key": @"perf_show_fps",  @"label": @"Show Render FPS",    @"def": @NO}
+        @{@"key": @"perf_show_cpu",  @"label": @"Show CPU Usage",            @"def": @YES},
+        @{@"key": @"perf_show_ram",  @"label": @"Show RAM Usage",            @"def": @YES},
+        @{@"key": @"perf_show_temp", @"label": @"Show Thermal State",        @"def": @YES},
+        @{@"key": @"perf_show_fps",  @"label": @"Show Render FPS",           @"def": @NO},
+        @{@"key": @"perf_dark_mode", @"label": @"Dark Mode (Liquid Glass)",  @"def": @NO}
     ];
     for (NSDictionary *cfg in switchesConfig) {
         UIView *row = [[UIView alloc] initWithFrame:CGRectMake(0, sY, width, 42)];
-        row.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.04];
+        row.backgroundColor = dark ? [UIColor colorWithWhite:1.0 alpha:0.06] : [UIColor colorWithWhite:0.0 alpha:0.04];
         row.layer.cornerRadius = 12;
+        row.tag = 3000;
+
         UILabel *lbl = [[UILabel alloc] initWithFrame:CGRectMake(14, 11, row.frame.size.width - 70, 20)];
         lbl.text = cfg[@"label"];
-        lbl.textColor = [UIColor blackColor];
+        lbl.textColor = textColor;
         lbl.font = [UIFont systemFontOfSize:14 weight:UIFontWeightMedium];
+        lbl.tag = 3003;
         [row addSubview:lbl];
+
         UISwitch *sw = [[UISwitch alloc] initWithFrame:CGRectMake(row.frame.size.width - 62, 6, 50, 30)];
         BOOL val = [defs objectForKey:cfg[@"key"]] ? [defs boolForKey:cfg[@"key"]] : [cfg[@"def"] boolValue];
         sw.on = val;
@@ -693,33 +765,86 @@ static UIWindow *tutorialWindow = nil;
         sw.accessibilityIdentifier = cfg[@"key"];
         [sw addTarget:self action:@selector(metricSwitchChanged:) forControlEvents:UIControlEventValueChanged];
         [row addSubview:sw];
+
         [scroll addSubview:row];
         sY += 48;
     }
     scroll.contentSize = CGSizeMake(width, sY + 20);
 }
 
+- (void)refreshTheme {
+    BOOL dark = [self isDarkMode];
+    UIColor *textColor = dark ? [UIColor whiteColor] : [UIColor blackColor];
+    UIColor *secondary = dark ? [[UIColor whiteColor] colorWithAlphaComponent:0.75] : [[UIColor blackColor] colorWithAlphaComponent:0.7];
+    UIColor *rowTint = dark ? [UIColor colorWithWhite:1.0 alpha:0.05] : [UIColor colorWithWhite:1.0 alpha:0.15];
+    UIColor *glassBorder = dark ? [[UIColor whiteColor] colorWithAlphaComponent:0.15] : [[UIColor whiteColor] colorWithAlphaComponent:0.5];
+    UIVisualEffect *effect = PerfGlassEffect(dark);
+
+    if (_bgGlass) _bgGlass.effect = effect;
+    if (_titleLabel) _titleLabel.textColor = textColor;
+    if (_footerLabel) _footerLabel.textColor = textColor;
+
+    if (_isDiagTab) {
+        _diagTabButton.backgroundColor = [self perfTeal];
+        [_diagTabButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+        _settingsTabButton.backgroundColor = dark ? [UIColor colorWithWhite:1.0 alpha:0.08] : [UIColor colorWithWhite:0.0 alpha:0.04];
+        [_settingsTabButton setTitleColor:textColor forState:UIControlStateNormal];
+    } else {
+        _settingsTabButton.backgroundColor = [self perfTeal];
+        [_settingsTabButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+        _diagTabButton.backgroundColor = dark ? [UIColor colorWithWhite:1.0 alpha:0.08] : [UIColor colorWithWhite:0.0 alpha:0.04];
+        [_diagTabButton setTitleColor:textColor forState:UIControlStateNormal];
+    }
+
+    for (UIView *v in _diagScrollView.subviews) {
+        if ([v isKindOfClass:[UIVisualEffectView class]]) {
+            UIVisualEffectView *p = (UIVisualEffectView *)v;
+            p.effect = effect;
+            p.layer.borderColor = glassBorder.CGColor;
+            p.contentView.backgroundColor = rowTint;
+            for (UIView *sub in p.contentView.subviews) {
+                if ([sub isKindOfClass:[UILabel class]]) {
+                    UILabel *l = (UILabel *)sub;
+                    l.textColor = (l.tag == 999) ? secondary : textColor;
+                }
+            }
+        }
+    }
+
+    [self refreshThemeRecursive:_settingsContainerView effect:effect textColor:textColor secondary:secondary rowTint:rowTint glassBorder:glassBorder];
+}
+
+- (void)refreshThemeRecursive:(UIView *)v effect:(UIVisualEffect *)effect textColor:(UIColor *)textColor secondary:(UIColor *)secondary rowTint:(UIColor *)rowTint glassBorder:(UIColor *)glassBorder {
+    if (v.tag == 3000) {
+        v.backgroundColor = rowTint;
+    } else if (v.tag == 3001 || v.tag == 3003) {
+        ((UILabel *)v).textColor = textColor;
+    } else if ([v isKindOfClass:[UIVisualEffectView class]]) {
+        UIVisualEffectView *p = (UIVisualEffectView *)v;
+        p.effect = effect;
+        p.layer.borderColor = glassBorder.CGColor;
+        p.contentView.backgroundColor = rowTint;
+    }
+    for (UIView *sub in v.subviews) {
+        [self refreshThemeRecursive:sub effect:effect textColor:textColor secondary:secondary rowTint:rowTint glassBorder:glassBorder];
+    }
+}
+
 - (void)diagTabTapped {
     if (_isDiagTab) return;
     _isDiagTab = YES;
-    _diagTabButton.backgroundColor = [self perfTeal];
-    [_diagTabButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    _settingsTabButton.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.04];
-    [_settingsTabButton setTitleColor:[UIColor blackColor] forState:UIControlStateNormal];
     _diagScrollView.hidden = NO;
     _settingsContainerView.hidden = YES;
+    [self refreshTheme];
 }
 
 - (void)settingsTabTapped {
     if (!_isDiagTab) return;
     _isDiagTab = NO;
-    _settingsTabButton.backgroundColor = [self perfTeal];
-    [_settingsTabButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    _diagTabButton.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.04];
-    [_diagTabButton setTitleColor:[UIColor blackColor] forState:UIControlStateNormal];
     _diagScrollView.hidden = YES;
     _settingsContainerView.hidden = NO;
     [self updateLivePreview];
+    [self refreshTheme];
 }
 
 - (void)updateLivePreview {
@@ -741,9 +866,7 @@ static UIWindow *tutorialWindow = nil;
         _sizeValueLabel.text = [NSString stringWithFormat:@"%d%%", (int)(val * 100)];
         [[NSUserDefaults standardUserDefaults] setFloat:val forKey:@"perf_pip_scale"];
         [self updateLivePreview];
-        if (sharedMonitorView) {
-            dispatch_async(dispatch_get_main_queue(), ^{ [sharedMonitorView applySettings]; });
-        }
+        if (sharedMonitorView) dispatch_async(dispatch_get_main_queue(), ^{ [sharedMonitorView applySettings]; });
     } @catch (NSException *e) {}
 }
 
@@ -753,9 +876,7 @@ static UIWindow *tutorialWindow = nil;
         _opacityValueLabel.text = [NSString stringWithFormat:@"%d%%", (int)(val * 100)];
         [[NSUserDefaults standardUserDefaults] setFloat:val forKey:@"perf_pip_opacity"];
         [self updateLivePreview];
-        if (sharedMonitorView) {
-            dispatch_async(dispatch_get_main_queue(), ^{ [sharedMonitorView applySettings]; });
-        }
+        if (sharedMonitorView) dispatch_async(dispatch_get_main_queue(), ^{ [sharedMonitorView applySettings]; });
     } @catch (NSException *e) {}
 }
 
@@ -763,47 +884,51 @@ static UIWindow *tutorialWindow = nil;
     @try {
         NSInteger idx = sender.tag - 100;
         [[NSUserDefaults standardUserDefaults] setInteger:idx forKey:@"perf_pip_color_idx"];
-        UIView *parentView = sender.superview;
-        if (parentView) {
-            for (UIView *subview in parentView.subviews) {
-                if ([subview isKindOfClass:[UIButton class]] && subview.tag >= 100 && subview.tag <= 105) {
-                    UIButton *btn = (UIButton *)subview;
-                    BOOL isCurrent = (btn.tag == sender.tag);
-                    btn.layer.borderWidth = isCurrent ? 2.5 : 1.0;
-                    btn.layer.borderColor = isCurrent ? [self perfTeal].CGColor : [[UIColor whiteColor] colorWithAlphaComponent:0.2].CGColor;
+        UIView *parent = sender.superview;
+        if (parent) {
+            for (UIView *sub in parent.subviews) {
+                if ([sub isKindOfClass:[UIButton class]] && sub.tag >= 100 && sub.tag <= 105) {
+                    UIButton *btn = (UIButton *)sub;
+                    BOOL isCur = (btn.tag == sender.tag);
+                    btn.layer.borderWidth = isCur ? 2.5 : 1.0;
+                    btn.layer.borderColor = isCur ? [self perfTeal].CGColor : [[UIColor whiteColor] colorWithAlphaComponent:0.25].CGColor;
                 }
             }
         }
         [self updateLivePreview];
         UIImpactFeedbackGenerator *gen = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleLight];
         [gen impactOccurred];
-        if (sharedMonitorView) {
-            dispatch_async(dispatch_get_main_queue(), ^{ [sharedMonitorView applySettings]; });
-        }
-    } @catch (NSException *exception) {
-        NSLog(@"[PerfMonitor] colorSelected error: %@", exception);
-    }
+        if (sharedMonitorView) dispatch_async(dispatch_get_main_queue(), ^{ [sharedMonitorView applySettings]; });
+    } @catch (NSException *ex) { NSLog(@"[PerfMonitor] colorSelected: %@", ex); }
 }
 
 - (void)metricSwitchChanged:(UISwitch *)sender {
     @try {
         NSString *key = sender.accessibilityIdentifier;
-        if (key) {
-            [[NSUserDefaults standardUserDefaults] setBool:sender.isOn forKey:key];
-            if (sharedMonitorView) {
-                dispatch_async(dispatch_get_main_queue(), ^{ [sharedMonitorView applySettings]; });
-            }
+        if (!key) return;
+        [[NSUserDefaults standardUserDefaults] setBool:sender.isOn forKey:key];
+
+        if ([key isEqualToString:@"perf_dark_mode"]) {
+            [UIView transitionWithView:self duration:0.25 options:UIViewAnimationOptionTransitionCrossDissolve animations:^{
+                [self refreshTheme];
+            } completion:nil];
+            return;
+        }
+
+        if (sharedMonitorView) {
+            dispatch_async(dispatch_get_main_queue(), ^{ [sharedMonitorView applySettings]; });
         }
     } @catch (NSException *e) {}
 }
 
 - (void)rowTapped:(UITapGestureRecognizer *)gesture {
     UIView *row = gesture.view;
-    for (UIView *sub in row.subviews) {
+    UIView *container = [row isKindOfClass:[UIVisualEffectView class]] ? ((UIVisualEffectView *)row).contentView : row;
+    for (UIView *sub in container.subviews) {
         if ([sub isKindOfClass:[UILabel class]] && sub.tag == 999) {
-            UILabel *valLabel = (UILabel *)sub;
-            if (valLabel.text) {
-                [UIPasteboard generalPasteboard].string = valLabel.text;
+            UILabel *val = (UILabel *)sub;
+            if (val.text) {
+                [UIPasteboard generalPasteboard].string = val.text;
                 UIImpactFeedbackGenerator *gen = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleLight];
                 [gen impactOccurred];
                 [self showToast:@"Copied to clipboard!"];
@@ -840,10 +965,9 @@ static UIWindow *tutorialWindow = nil;
 
 - (void)shareTapped {
     if (!self.shareSummaryText) return;
-    UIActivityViewController *activityVC = [[UIActivityViewController alloc] initWithActivityItems:@[self.shareSummaryText] applicationActivities:nil];
-    UIWindow *keyWindow = self.window;
-    UIViewController *rootVC = keyWindow.rootViewController;
-    if (rootVC) [rootVC presentViewController:activityVC animated:YES completion:nil];
+    UIActivityViewController *vc = [[UIActivityViewController alloc] initWithActivityItems:@[self.shareSummaryText] applicationActivities:nil];
+    UIViewController *root = self.window.rootViewController;
+    if (root) [root presentViewController:vc animated:YES completion:nil];
 }
 
 - (void)runStressTestTapped { if (self.onRunTest) self.onRunTest(); }
