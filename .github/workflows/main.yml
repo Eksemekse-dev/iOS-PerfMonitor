@@ -20,6 +20,7 @@ jobs:
             -framework Foundation \
             -framework UIKit \
             -framework CoreGraphics \
+            -framework QuartzCore \
             main.m \
             -o PerfMonitor.dylib
 

@@ -37,9 +37,16 @@ static inline UIColor *getPerfColorForIndex(NSInteger idx, CGFloat alpha) {
         _isTriggered = NO;
 
         UIEdgeInsets safeInsets = UIEdgeInsetsZero;
-        if (@available(iOS 11.0, *)) {
-            UIWindow *window = [UIApplication sharedApplication].windows.firstObject;
-            safeInsets = window.safeAreaInsets;
+        if (@available(iOS 13.0, *)) {
+            for (UIWindowScene *scene in [UIApplication sharedApplication].connectedScenes) {
+                if ([scene isKindOfClass:[UIWindowScene class]]) {
+                    UIWindow *window = scene.windows.firstObject;
+                    if (window) {
+                        safeInsets = window.safeAreaInsets;
+                        break;
+                    }
+                }
+            }
         }
 
         CGFloat topY = safeInsets.top > 0 ? safeInsets.top + 5 : 35;
@@ -215,7 +222,7 @@ static UIWindow *tutorialWindow = nil;
 
 @implementation PerfMonitorView {
     CGPoint _initialCenter;
-    CADisplayLink *_fpsDisplayLink;
+    id _fpsDisplayLink;
     NSInteger _fpsFrameCount;
     NSTimeInterval _fpsLastTimestamp;
     NSInteger _currentFps;
@@ -240,12 +247,15 @@ static UIWindow *tutorialWindow = nil;
         _infoLabel.textAlignment = NSTextAlignmentCenter;
         [self addSubview:_infoLabel];
 
-        // Start FPS tracking
+        // Start FPS tracking via runtime dynamic resolution (compiles without QuartzCore static link requirement)
         _fpsFrameCount = 0;
         _fpsLastTimestamp = 0;
         _currentFps = 60;
-        _fpsDisplayLink = [CADisplayLink displayLinkWithTarget:self selector:@selector(displayLinkTick:)];
-        [_fpsDisplayLink addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSRunLoopCommonModes];
+        Class dlClass = NSClassFromString(@"CADisplayLink");
+        if (dlClass && [dlClass respondsToSelector:@selector(displayLinkWithTarget:selector:)]) {
+            _fpsDisplayLink = [dlClass displayLinkWithTarget:self selector:@selector(displayLinkTick:)];
+            [_fpsDisplayLink addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSRunLoopCommonModes];
+        }
 
         [self applySettings];
 
@@ -254,17 +264,32 @@ static UIWindow *tutorialWindow = nil;
     return self;
 }
 
-- (void)displayLinkTick:(CADisplayLink *)link {
+- (void)displayLinkTick:(id)link {
+    NSTimeInterval linkTimestamp = 0;
+    if ([link respondsToSelector:@selector(timestamp)]) {
+        NSMethodSignature *sig = [link methodSignatureForSelector:@selector(timestamp)];
+        if (sig) {
+            NSInvocation *inv = [NSInvocation invocationWithMethodSignature:sig];
+            [inv setSelector:@selector(timestamp)];
+            [inv setTarget:link];
+            [inv invoke];
+            [inv getReturnValue:&linkTimestamp];
+        }
+    }
+    if (linkTimestamp <= 0) {
+        linkTimestamp = [[NSDate date] timeIntervalSince1970];
+    }
+
     if (_fpsLastTimestamp == 0) {
-        _fpsLastTimestamp = link.timestamp;
+        _fpsLastTimestamp = linkTimestamp;
         return;
     }
     _fpsFrameCount++;
-    NSTimeInterval delta = link.timestamp - _fpsLastTimestamp;
+    NSTimeInterval delta = linkTimestamp - _fpsLastTimestamp;
     if (delta >= 1.0) {
         _currentFps = (NSInteger)round(_fpsFrameCount / delta);
         _fpsFrameCount = 0;
-        _fpsLastTimestamp = link.timestamp;
+        _fpsLastTimestamp = linkTimestamp;
     }
 }
 
