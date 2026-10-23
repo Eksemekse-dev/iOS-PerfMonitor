@@ -116,7 +116,7 @@ static UIVisualEffectView *PerfGlassPanel(CGRect frame, CGFloat cr, BOOL dark) {
         instructions.textColor = [UIColor whiteColor];
         instructions.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
         instructions.numberOfLines = 0;
-        instructions.text = @"• 4-Finger Tap: Toggle floating PiP monitor\n\n• 4-Finger Hold (2s): Open Diagnostic & Settings Menu\n\n• Drag: Move PiP widget anywhere on screen";
+        instructions.text = @"• 4-Finger Tap: Toggle floating PiP monitor\n\n• 4-Finger Hold (0.6s): Open Diagnostic & Settings Menu\n\n• Drag: Move PiP widget anywhere on screen";
         [_guideCardView addSubview:instructions];
 
         _touchCountLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, 172, cardW - 40, 32)];
@@ -217,6 +217,7 @@ static PerfMonitorWindow *sharedMonitorWindow = nil;
 static PerfMonitorView *sharedMonitorView = nil;
 static UIWindow *fullScreenMenuWindow = nil;
 static UIWindow *tutorialWindow = nil;
+static UIWindow *flashWindow = nil;
 
 @implementation PerfMonitorView {
     CGPoint _initialCenter;
@@ -399,7 +400,6 @@ static UIWindow *tutorialWindow = nil;
 
 - (void)buildUI:(CGRect)frame {
     BOOL dark = [self isDarkMode];
-
     _bgGlass = [[UIVisualEffectView alloc] initWithEffect:PerfGlassEffect(dark)];
     _bgGlass.frame = self.bounds;
     _bgGlass.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
@@ -1064,6 +1064,8 @@ static UIWindow *tutorialWindow = nil;
 + (void)handleFourFingerLongPress:(UILongPressGestureRecognizer *)sender;
 + (void)handleOrientationChange:(NSNotification *)notification;
 + (void)dismissTutorialAndExecute:(void(^)(void))action;
++ (void)showGreenGlassFlashForTouches:(NSArray<NSValue *> *)touchPoints completion:(void(^)(void))completion;
++ (void)openMenuNow;
 @end
 
 @implementation PerfMonitorGestureHandler
@@ -1089,46 +1091,155 @@ static UIWindow *tutorialWindow = nil;
     }
 }
 
++ (void)showGreenGlassFlashForTouches:(NSArray<NSValue *> *)touchPoints completion:(void(^)(void))completion {
+    UIWindowScene *scene = nil;
+    for (UIWindowScene *s in [UIApplication sharedApplication].connectedScenes) {
+        if ([s isKindOfClass:[UIWindowScene class]]) { scene = s; break; }
+    }
+    if (!scene) { if (completion) completion(); return; }
+
+    if (flashWindow) { flashWindow.hidden = YES; flashWindow = nil; }
+    flashWindow = [[UIWindow alloc] initWithFrame:scene.coordinateSpace.bounds];
+    flashWindow.windowScene = scene;
+    flashWindow.windowLevel = UIWindowLevelAlert + 3500;
+    flashWindow.hidden = NO;
+    flashWindow.backgroundColor = [UIColor clearColor];
+    flashWindow.rootViewController = [[UIViewController alloc] init];
+    flashWindow.rootViewController.view.backgroundColor = [UIColor clearColor];
+
+    UIView *rootView = flashWindow.rootViewController.view;
+    CGRect bounds = flashWindow.bounds;
+
+    // Full-screen green Liquid Glass
+    UIVisualEffectView *glass = [[UIVisualEffectView alloc] initWithEffect:PerfGlassEffect(NO)];
+    glass.frame = bounds;
+    glass.contentView.backgroundColor = [UIColor colorWithRed:0.0 green:0.78 blue:0.70 alpha:0.30];
+    glass.alpha = 0.0;
+    [rootView addSubview:glass];
+
+    // Green pulsing rings at each touch point
+    NSMutableArray<UIView *> *rings = [NSMutableArray array];
+    for (NSValue *val in touchPoints) {
+        CGPoint p = [val CGPointValue];
+        UIView *ring = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 70, 70)];
+        ring.center = p;
+        ring.backgroundColor = [UIColor colorWithRed:0.0 green:0.9 blue:0.7 alpha:0.25];
+        ring.layer.cornerRadius = 35;
+        ring.layer.borderWidth = 3.0;
+        ring.layer.borderColor = [UIColor colorWithRed:0.0 green:1.0 blue:0.7 alpha:0.95].CGColor;
+        ring.layer.shadowColor = [UIColor colorWithRed:0.0 green:1.0 blue:0.7 alpha:1.0].CGColor;
+        ring.layer.shadowRadius = 18;
+        ring.layer.shadowOpacity = 0.8;
+        ring.layer.shadowOffset = CGSizeZero;
+        ring.alpha = 0.0;
+        ring.transform = CGAffineTransformMakeScale(0.2, 0.2);
+        [rootView addSubview:ring];
+        [rings addObject:ring];
+    }
+
+    UIImpactFeedbackGenerator *gen = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleHeavy];
+    [gen impactOccurred];
+
+    [UIView animateWithDuration:0.15 delay:0 options:UIViewAnimationOptionCurveEaseOut animations:^{
+        glass.alpha = 1.0;
+        for (UIView *r in rings) {
+            r.alpha = 1.0;
+            r.transform = CGAffineTransformMakeScale(1.0, 1.0);
+        }
+    } completion:^(BOOL finished) {
+        // Hold briefly, then fade out and open menu
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            [UIView animateWithDuration:0.25 delay:0 options:UIViewAnimationOptionCurveEaseIn animations:^{
+                glass.alpha = 0.0;
+                for (UIView *r in rings) {
+                    r.alpha = 0.0;
+                    r.transform = CGAffineTransformMakeScale(2.2, 2.2);
+                }
+            } completion:^(BOOL finished) {
+                flashWindow.hidden = YES;
+                flashWindow = nil;
+                if (completion) completion();
+            }];
+        });
+    }];
+}
+
++ (void)openMenuNow {
+    if (fullScreenMenuWindow) return;
+    UIWindowScene *targetScene = nil;
+    for (UIWindowScene *scene in [UIApplication sharedApplication].connectedScenes) {
+        if ([scene isKindOfClass:[UIWindowScene class]]) { targetScene = scene; break; }
+    }
+    if (!targetScene) return;
+    fullScreenMenuWindow = [[UIWindow alloc] initWithFrame:targetScene.coordinateSpace.bounds];
+    fullScreenMenuWindow.windowScene = targetScene;
+    fullScreenMenuWindow.windowLevel = UIWindowLevelAlert + 2000;
+    fullScreenMenuWindow.hidden = NO;
+
+    PerfFullScreenMenuView *menuView = [[PerfFullScreenMenuView alloc] initWithFrame:fullScreenMenuWindow.bounds];
+    __block UIWindow *menuWinRef = fullScreenMenuWindow;
+
+    menuView.onClose = ^{
+        menuWinRef.hidden = YES;
+        fullScreenMenuWindow = nil;
+    };
+
+    menuView.onRunTest = ^{
+        UIAlertController *confirm = [UIAlertController alertControllerWithTitle:@"Warning"
+                                                                         message:@"This test will allocate RAM until the app crashes to measure limits. Continue?"
+                                                                  preferredStyle:UIAlertControllerStyleAlert];
+        [confirm addAction:[UIAlertAction actionWithTitle:@"Start" style:UIAlertActionStyleDestructive handler:^(UIAlertAction * _Nonnull act) {
+            if (menuWinRef) { menuWinRef.hidden = YES; fullScreenMenuWindow = nil; }
+            [PerfMonitorManager runRamStressTest];
+        }]];
+        [confirm addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+        UIViewController *vc = [[UIViewController alloc] init];
+        menuWinRef.rootViewController = vc;
+        [vc presentViewController:confirm animated:YES completion:nil];
+    };
+
+    fullScreenMenuWindow.rootViewController = [[UIViewController alloc] init];
+    [fullScreenMenuWindow.rootViewController.view addSubview:menuView];
+}
+
 + (void)handleFourFingerLongPress:(UILongPressGestureRecognizer *)sender {
-    if (sender.state == UIGestureRecognizerStateBegan) {
-        [self dismissTutorialAndExecute:^{
-            if (fullScreenMenuWindow) return;
-            UIWindowScene *targetScene = nil;
-            for (UIWindowScene *scene in [UIApplication sharedApplication].connectedScenes) {
-                if ([scene isKindOfClass:[UIWindowScene class]]) { targetScene = scene; break; }
-            }
-            if (!targetScene) return;
-            fullScreenMenuWindow = [[UIWindow alloc] initWithFrame:targetScene.coordinateSpace.bounds];
-            fullScreenMenuWindow.windowScene = targetScene;
-            fullScreenMenuWindow.windowLevel = UIWindowLevelAlert + 2000;
-            fullScreenMenuWindow.hidden = NO;
-            PerfFullScreenMenuView *menuView = [[PerfFullScreenMenuView alloc] initWithFrame:fullScreenMenuWindow.bounds];
-            __block UIWindow *menuWinRef = fullScreenMenuWindow;
-            menuView.onClose = ^{
-                menuWinRef.hidden = YES;
-                fullScreenMenuWindow = nil;
-            };
-            menuView.onRunTest = ^{
-                UIAlertController *confirm = [UIAlertController alertControllerWithTitle:@"Warning"
-                                                                                 message:@"This test will allocate RAM until the app crashes to measure limits. Continue?"
-                                                                          preferredStyle:UIAlertControllerStyleAlert];
-                [confirm addAction:[UIAlertAction actionWithTitle:@"Start" style:UIAlertActionStyleDestructive handler:^(UIAlertAction * _Nonnull act) {
-                    if (menuWinRef) { menuWinRef.hidden = YES; fullScreenMenuWindow = nil; }
-                    [PerfMonitorManager runRamStressTest];
-                }]];
-                [confirm addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
-                UIViewController *vc = [[UIViewController alloc] init];
-                menuWinRef.rootViewController = vc;
-                [vc presentViewController:confirm animated:YES completion:nil];
-            };
-            fullScreenMenuWindow.rootViewController = [[UIViewController alloc] init];
-            [fullScreenMenuWindow.rootViewController.view addSubview:menuView];
+    if (sender.state != UIGestureRecognizerStateBegan) return;
+    if (fullScreenMenuWindow) return;
+
+    // Collect all 4 touch points in window coordinates
+    NSMutableArray<NSValue *> *points = [NSMutableArray array];
+    NSUInteger touchCount = sender.numberOfTouches;
+    UIView *view = sender.view;
+    for (NSUInteger i = 0; i < touchCount; i++) {
+        CGPoint p = [sender locationOfTouch:i inView:view];
+        [points addObject:[NSValue valueWithCGPoint:p]];
+    }
+    // Fallback: if no touch points (shouldn't happen), use center
+    if (points.count == 0) {
+        CGPoint center = CGPointMake([UIScreen mainScreen].bounds.size.width / 2.0,
+                                     [UIScreen mainScreen].bounds.size.height / 2.0);
+        [points addObject:[NSValue valueWithCGPoint:center]];
+    }
+
+    // Dismiss tutorial in parallel (fire & forget)
+    if (tutorialWindow) {
+        [PerfMonitorManager setTutorialCompleted];
+        [UIView animateWithDuration:0.3 animations:^{
+            tutorialWindow.alpha = 0.0;
+        } completion:^(BOOL finished) {
+            tutorialWindow.hidden = YES;
+            tutorialWindow = nil;
         }];
     }
+
+    // Show green Liquid Glass flash → then open menu
+    [self showGreenGlassFlashForTouches:points completion:^{
+        [self openMenuNow];
+    }];
 }
 
 + (void)handleOrientationChange:(NSNotification *)notification {
-    if (fullScreenMenuWindow || tutorialWindow) return;
+    if (fullScreenMenuWindow || tutorialWindow || flashWindow) return;
     if (sharedMonitorWindow && !sharedMonitorWindow.isHidden) {
         CGSize screenSize = [UIScreen mainScreen].bounds.size;
         sharedMonitorWindow.center = CGPointMake(screenSize.width / 2.0, 90.0);
@@ -1173,7 +1284,8 @@ __attribute__((constructor)) static void tweakEntry() {
 
         UILongPressGestureRecognizer *fourFingerLongPress = [[UILongPressGestureRecognizer alloc] initWithTarget:[PerfMonitorGestureHandler class] action:@selector(handleFourFingerLongPress:)];
         fourFingerLongPress.numberOfTouchesRequired = 4;
-        fourFingerLongPress.minimumPressDuration = 2.0;
+        fourFingerLongPress.minimumPressDuration = 0.6;   // skrócone z 2.0s
+        fourFingerLongPress.allowableMovement = 40.0;     // tolerancja drgań palców
         [targetWindow addGestureRecognizer:fourFingerLongPress];
 
         [[NSNotificationCenter defaultCenter] addObserver:[PerfMonitorGestureHandler class]
