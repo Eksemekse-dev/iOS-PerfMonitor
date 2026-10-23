@@ -379,7 +379,6 @@ static UIWindow *tutorialWindow = nil;
 
 - (instancetype)initWithFrame:(CGRect)frame {
     if (self = [super initWithFrame:frame]) {
-        // Dynamic Appearance determination based on UserDefaults or system
         [self updateThemeStyling];
 
         _cardView = [[UIView alloc] initWithFrame:CGRectMake(20, 40, frame.size.width - 40, frame.size.height - 80)];
@@ -454,7 +453,7 @@ static UIWindow *tutorialWindow = nil;
         CGFloat contentY = 104;
         CGFloat contentH = _cardView.frame.size.height - contentY - 80;
 
-        // --- TAB 1: DIAGNOSTICS VIEW (iOS Settings Grouped Table Style) ---
+        // --- TAB 1: DIAGNOSTICS VIEW ---
         _diagScrollView = [[UIScrollView alloc] initWithFrame:CGRectMake(16, contentY, _cardView.frame.size.width - 32, contentH)];
         _diagScrollView.showsVerticalScrollIndicator = NO;
         [_cardView addSubview:_diagScrollView];
@@ -496,7 +495,7 @@ static UIWindow *tutorialWindow = nil;
         }
         _diagScrollView.contentSize = CGSizeMake(_diagScrollView.frame.size.width, yOffset);
 
-        // Stress Test Button (iOS Action Style)
+        // Stress Test Button
         _testButton = [UIButton buttonWithType:UIButtonTypeSystem];
         _testButton.frame = CGRectMake(16, _cardView.frame.size.height - 64, _cardView.frame.size.width - 32, 44);
         _testButton.backgroundColor = [UIColor systemRedColor];
@@ -532,7 +531,7 @@ static UIWindow *tutorialWindow = nil;
         [settingsScroll addSubview:themeTitle];
 
         _themeSegmentControl = [[UISegmentedControl alloc] initWithItems:@[@"Ciemny", @"Jasny"]];
-        _themeSegmentControl.frame = CGRectMake(settingsScroll.frame.size.width - 150, sY, 150, 32];
+        _themeSegmentControl.frame = CGRectMake(settingsScroll.frame.size.width - 150, sY, 150, 32); // <-- Poprawiony nawias
         NSInteger themeIdx = [defs boolForKey:@"perf_is_light_theme"] ? 1 : 0;
         _themeSegmentControl.selectedSegmentIndex = themeIdx;
         [_themeSegmentControl addTarget:self action:@selector(themeChanged:) forControlEvents:UIControlEventValueChanged];
@@ -646,11 +645,8 @@ static UIWindow *tutorialWindow = nil;
     
     [UIView animateWithDuration:0.3 animations:^{
         [self updateThemeStyling];
-        // Odświeżenie wyglądu elementów wewnątrz
-        _cardView.subviews.lastObject.hidden = NO; // Przeładowanie kontenera
     }];
     
-    // Odśwież widok pełnoekranowy przez ponowne załadowanie
     if (fullScreenMenuWindow) {
         fullScreenMenuWindow.rootViewController.view = [[PerfFullScreenMenuView alloc] initWithFrame:fullScreenMenuWindow.bounds];
     }
@@ -676,7 +672,6 @@ static UIWindow *tutorialWindow = nil;
 - (void)opacitySliderChanged:(UISlider *)slider {
     float val = slider.value;
     _opacityValueLabel.text = [NSString stringWithFormat:@"%d%%", (int)(val * 100)];
-    [[NSUserDefaults standardUserDefaults] setFloat:val forKey:@"perf_pip_scale"]; // lub opacity
     [[NSUserDefaults standardUserDefaults] setFloat:val forKey:@"perf_pip_opacity"];
     [[NSUserDefaults standardUserDefaults] synchronize];
     
