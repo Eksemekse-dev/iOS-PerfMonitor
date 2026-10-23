@@ -5,7 +5,6 @@
 #include <unistd.h>
 #include <dlfcn.h>
 
-// ===== Color helper =====
 static inline UIColor *getPerfColorForIndex(NSInteger idx, CGFloat alpha) {
     switch (idx) {
         case 1: return [[UIColor colorWithRed:0.06 green:0.09 blue:0.18 alpha:1.0] colorWithAlphaComponent:alpha];
@@ -17,7 +16,6 @@ static inline UIColor *getPerfColorForIndex(NSInteger idx, CGFloat alpha) {
     }
 }
 
-// ===== Liquid Glass helpers =====
 static UIVisualEffect *PerfGlassEffect(BOOL dark) {
     Class glassClass = NSClassFromString(@"UIGlassEffect");
     if (glassClass) {
@@ -54,25 +52,41 @@ static UIVisualEffectView *PerfGlassPanel(CGRect frame, CGFloat cr, BOOL dark) {
     return p;
 }
 
-// ===== TUTORIAL =====
+// ===== TUTORIAL (Liquid Glass) =====
 @interface PerfTutorialView : UIView
 @property (nonatomic, copy) void (^onCompleted)(void);
 - (void)clearDots;
 @end
 
 @implementation PerfTutorialView {
-    UILabel *_headerInstructionLabel;
-    UIView *_guideCardView;
+    UIVisualEffectView *_bgGlass;
+    UIView *_headerPill;
+    UILabel *_headerLabel;
+    UIVisualEffectView *_cardView;
     UILabel *_touchCountLabel;
     UIButton *_skipButton;
     BOOL _isTriggered;
 }
 
+- (UIColor *)perfTeal { return [UIColor colorWithRed:0.0 green:0.78 blue:0.70 alpha:1.0]; }
+- (BOOL)isDarkMode {
+    NSUserDefaults *defs = [NSUserDefaults standardUserDefaults];
+    if ([defs objectForKey:@"perf_dark_mode"] == nil) return YES;
+    return [defs boolForKey:@"perf_dark_mode"];
+}
+
 - (instancetype)initWithFrame:(CGRect)frame {
     if (self = [super initWithFrame:frame]) {
-        self.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.88];
         self.multipleTouchEnabled = YES;
         _isTriggered = NO;
+        BOOL dark = [self isDarkMode];
+
+        _bgGlass = [[UIVisualEffectView alloc] initWithEffect:PerfGlassEffect(dark)];
+        _bgGlass.frame = self.bounds;
+        _bgGlass.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        _bgGlass.contentView.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.55];
+        [self addSubview:_bgGlass];
+
         UIEdgeInsets safeInsets = UIEdgeInsetsZero;
         if (@available(iOS 13.0, *)) {
             for (UIWindowScene *scene in [UIApplication sharedApplication].connectedScenes) {
@@ -82,62 +96,131 @@ static UIVisualEffectView *PerfGlassPanel(CGRect frame, CGFloat cr, BOOL dark) {
                 }
             }
         }
-        CGFloat topY = safeInsets.top > 0 ? safeInsets.top + 5 : 35;
-        _headerInstructionLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, topY, frame.size.width - 40, 42)];
-        _headerInstructionLabel.backgroundColor = [[UIColor whiteColor] colorWithAlphaComponent:0.12];
-        _headerInstructionLabel.textColor = [UIColor whiteColor];
-        _headerInstructionLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightBold];
-        _headerInstructionLabel.textAlignment = NSTextAlignmentCenter;
-        _headerInstructionLabel.layer.cornerRadius = 21;
-        _headerInstructionLabel.layer.masksToBounds = YES;
-        _headerInstructionLabel.layer.borderWidth = 1.0;
-        _headerInstructionLabel.layer.borderColor = [[UIColor whiteColor] colorWithAlphaComponent:0.2].CGColor;
-        _headerInstructionLabel.text = @"Touch with 4 fingers to test gesture";
-        [self addSubview:_headerInstructionLabel];
+        CGFloat topY = safeInsets.top > 0 ? safeInsets.top + 8 : 32;
+        CGFloat L = 24, R = 24;
+        CGFloat contentW = frame.size.width - L - R;
 
-        CGFloat cardW = frame.size.width - 40;
-        CGFloat cardH = 220;
-        _guideCardView = [[UIView alloc] initWithFrame:CGRectMake(20, (frame.size.height - cardH) / 2.0 - 20, cardW, cardH)];
-        _guideCardView.backgroundColor = [[UIColor colorWithRed:0.12 green:0.12 blue:0.15 alpha:1.0] colorWithAlphaComponent:0.9];
-        _guideCardView.layer.cornerRadius = 20;
-        _guideCardView.layer.borderWidth = 1.0;
-        _guideCardView.layer.borderColor = [[UIColor whiteColor] colorWithAlphaComponent:0.15].CGColor;
-        _guideCardView.userInteractionEnabled = NO;
-        [self addSubview:_guideCardView];
+        // Header pill
+        _headerPill = [[UIView alloc] initWithFrame:CGRectMake(L, topY, contentW, 44)];
+        _headerPill.backgroundColor = [self.perfTeal colorWithAlphaComponent:0.22];
+        _headerPill.layer.cornerRadius = 22;
+        _headerPill.layer.borderWidth = 1.0;
+        _headerPill.layer.borderColor = [self.perfTeal colorWithAlphaComponent:0.5].CGColor;
+        _headerPill.layer.shadowColor = self.perfTeal.CGColor;
+        _headerPill.layer.shadowRadius = 12;
+        _headerPill.layer.shadowOpacity = 0.3;
+        _headerPill.layer.shadowOffset = CGSizeZero;
+        [self addSubview:_headerPill];
 
-        UILabel *cardTitle = [[UILabel alloc] initWithFrame:CGRectMake(16, 16, cardW - 32, 24)];
-        cardTitle.text = @"iOS PerfMonitor Gesture Guide";
-        cardTitle.textColor = [UIColor systemCyanColor];
-        cardTitle.font = [UIFont systemFontOfSize:15 weight:UIFontWeightBold];
-        cardTitle.textAlignment = NSTextAlignmentCenter;
-        [_guideCardView addSubview:cardTitle];
+        _headerLabel = [[UILabel alloc] initWithFrame:_headerPill.bounds];
+        _headerLabel.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        _headerLabel.text = @"✦   Touch with 4 fingers to try   ✦";
+        _headerLabel.textColor = [UIColor whiteColor];
+        _headerLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightSemibold];
+        _headerLabel.textAlignment = NSTextAlignmentCenter;
+        [_headerPill addSubview:_headerLabel];
 
-        UILabel *instructions = [[UILabel alloc] initWithFrame:CGRectMake(20, 48, cardW - 40, 110)];
-        instructions.textColor = [UIColor whiteColor];
-        instructions.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
-        instructions.numberOfLines = 0;
-        instructions.text = @"• 4-Finger Tap: Toggle floating PiP monitor\n\n• 4-Finger Hold (0.6s): Open Diagnostic & Settings Menu\n\n• Drag: Move PiP widget anywhere on screen";
-        [_guideCardView addSubview:instructions];
+        // Card
+        CGFloat cardH = 360;
+        CGFloat cardY = topY + 58 + ((frame.size.height - cardH - topY - 110) / 2.0);
+        if (cardY < topY + 58) cardY = topY + 58;
 
-        _touchCountLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, 172, cardW - 40, 32)];
-        _touchCountLabel.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.4];
-        _touchCountLabel.textColor = [UIColor lightGrayColor];
+        _cardView = PerfGlassPanel(CGRectMake(L, cardY, contentW, cardH), 24, dark);
+        [self addSubview:_cardView];
+
+        UIView *iconCircle = [[UIView alloc] initWithFrame:CGRectMake(contentW/2.0 - 24, 20, 48, 48)];
+        iconCircle.backgroundColor = [self.perfTeal colorWithAlphaComponent:0.22];
+        iconCircle.layer.cornerRadius = 24;
+        iconCircle.layer.borderWidth = 1.0;
+        iconCircle.layer.borderColor = [self.perfTeal colorWithAlphaComponent:0.6].CGColor;
+        [_cardView.contentView addSubview:iconCircle];
+
+        UILabel *iconEmoji = [[UILabel alloc] initWithFrame:iconCircle.bounds];
+        iconEmoji.text = @"✋";
+        iconEmoji.font = [UIFont systemFontOfSize:24];
+        iconEmoji.textAlignment = NSTextAlignmentCenter;
+        [iconCircle addSubview:iconEmoji];
+
+        UILabel *titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, 78, contentW - 40, 28)];
+        titleLabel.text = @"Welcome to Secret Menu";
+        titleLabel.textColor = dark ? [UIColor whiteColor] : [UIColor blackColor];
+        titleLabel.font = [UIFont systemFontOfSize:22 weight:UIFontWeightHeavy];
+        titleLabel.textAlignment = NSTextAlignmentCenter;
+        [_cardView.contentView addSubview:titleLabel];
+
+        UILabel *subtitleLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, 108, contentW - 40, 18)];
+        subtitleLabel.text = @"Master the 4-finger secrets";
+        subtitleLabel.textColor = dark ? [[UIColor whiteColor] colorWithAlphaComponent:0.65] : [[UIColor blackColor] colorWithAlphaComponent:0.55];
+        subtitleLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
+        subtitleLabel.textAlignment = NSTextAlignmentCenter;
+        [_cardView.contentView addSubview:subtitleLabel];
+
+        UIView *divider1 = [[UIView alloc] initWithFrame:CGRectMake(20, 138, contentW - 40, 0.6)];
+        divider1.backgroundColor = dark ? [[UIColor whiteColor] colorWithAlphaComponent:0.15] : [[UIColor blackColor] colorWithAlphaComponent:0.08];
+        [_cardView.contentView addSubview:divider1];
+
+        NSArray *gestures = @[
+            @{@"emoji": @"👆", @"title": @"4-Finger Tap", @"desc": @"Toggle floating PiP monitor"},
+            @{@"emoji": @"✋", @"title": @"4-Finger Hold (0.6s)", @"desc": @"Open Secret Menu"},
+            @{@"emoji": @"↔️", @"title": @"Drag PiP Widget", @"desc": @"Move it anywhere on screen"}
+        ];
+
+        CGFloat rowY = 150;
+        for (NSDictionary *g in gestures) {
+            UIView *emojiCircle = [[UIView alloc] initWithFrame:CGRectMake(24, rowY + 6, 36, 36)];
+            emojiCircle.backgroundColor = [self.perfTeal colorWithAlphaComponent:0.15];
+            emojiCircle.layer.cornerRadius = 18;
+            [_cardView.contentView addSubview:emojiCircle];
+
+            UILabel *emoji = [[UILabel alloc] initWithFrame:emojiCircle.bounds];
+            emoji.text = g[@"emoji"];
+            emoji.font = [UIFont systemFontOfSize:18];
+            emoji.textAlignment = NSTextAlignmentCenter;
+            [emojiCircle addSubview:emoji];
+
+            UILabel *rowTitle = [[UILabel alloc] initWithFrame:CGRectMake(72, rowY + 6, contentW - 88, 18)];
+            rowTitle.text = g[@"title"];
+            rowTitle.textColor = dark ? [UIColor whiteColor] : [UIColor blackColor];
+            rowTitle.font = [UIFont systemFontOfSize:14 weight:UIFontWeightHeavy];
+            [_cardView.contentView addSubview:rowTitle];
+
+            UILabel *rowDesc = [[UILabel alloc] initWithFrame:CGRectMake(72, rowY + 24, contentW - 88, 16)];
+            rowDesc.text = g[@"desc"];
+            rowDesc.textColor = dark ? [[UIColor whiteColor] colorWithAlphaComponent:0.55] : [[UIColor blackColor] colorWithAlphaComponent:0.5];
+            rowDesc.font = [UIFont systemFontOfSize:12 weight:UIFontWeightRegular];
+            [_cardView.contentView addSubview:rowDesc];
+
+            rowY += 58;
+        }
+
+        UIView *divider2 = [[UIView alloc] initWithFrame:CGRectMake(20, rowY + 4, contentW - 40, 0.6)];
+        divider2.backgroundColor = dark ? [[UIColor whiteColor] colorWithAlphaComponent:0.15] : [[UIColor blackColor] colorWithAlphaComponent:0.08];
+        [_cardView.contentView addSubview:divider2];
+
+        _touchCountLabel = [[UILabel alloc] initWithFrame:CGRectMake(contentW/2.0 - 80, rowY + 18, 160, 34)];
+        _touchCountLabel.backgroundColor = dark ? [[UIColor blackColor] colorWithAlphaComponent:0.35] : [[UIColor blackColor] colorWithAlphaComponent:0.08];
+        _touchCountLabel.textColor = [self.perfTeal colorWithAlphaComponent:0.9];
         _touchCountLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightBold];
         _touchCountLabel.textAlignment = NSTextAlignmentCenter;
-        _touchCountLabel.layer.cornerRadius = 16;
+        _touchCountLabel.layer.cornerRadius = 17;
         _touchCountLabel.layer.masksToBounds = YES;
-        _touchCountLabel.text = @"Touches detected: 0 / 4";
-        [_guideCardView addSubview:_touchCountLabel];
+        _touchCountLabel.text = @"Touches: 0 / 4";
+        [_cardView.contentView addSubview:_touchCountLabel];
 
-        _skipButton = [UIButton buttonWithType:UIButtonTypeSystem];
-        _skipButton.frame = CGRectMake((frame.size.width - 140) / 2.0, CGRectGetMaxY(_guideCardView.frame) + 30, 140, 40);
-        _skipButton.backgroundColor = [[UIColor whiteColor] colorWithAlphaComponent:0.15];
+        CGFloat skipY = cardY + cardH + 20;
+        _skipButton = [UIButton buttonWithType:UIButtonTypeCustom];
+        _skipButton.frame = CGRectMake(L, skipY, contentW, 50);
+        _skipButton.backgroundColor = self.perfTeal;
+        _skipButton.layer.cornerRadius = 25;
+        _skipButton.layer.borderWidth = 0.8;
+        _skipButton.layer.borderColor = [[UIColor whiteColor] colorWithAlphaComponent:0.4].CGColor;
+        _skipButton.layer.shadowColor = self.perfTeal.CGColor;
+        _skipButton.layer.shadowRadius = 15;
+        _skipButton.layer.shadowOpacity = 0.35;
+        _skipButton.layer.shadowOffset = CGSizeZero;
         [_skipButton setTitle:@"Skip Tutorial" forState:UIControlStateNormal];
         [_skipButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-        _skipButton.titleLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightBold];
-        _skipButton.layer.cornerRadius = 20;
-        _skipButton.layer.borderWidth = 1.0;
-        _skipButton.layer.borderColor = [[UIColor whiteColor] colorWithAlphaComponent:0.3].CGColor;
+        _skipButton.titleLabel.font = [UIFont systemFontOfSize:17 weight:UIFontWeightSemibold];
         [_skipButton addTarget:self action:@selector(skipTapped) forControlEvents:UIControlEventTouchUpInside];
         [self addSubview:_skipButton];
     }
@@ -161,34 +244,45 @@ static UIVisualEffectView *PerfGlassPanel(CGRect frame, CGFloat cr, BOOL dark) {
     [self clearDots];
     NSSet<UITouch *> *allTouches = event.allTouches;
     BOOL isFourFingers = (allTouches.count >= 4);
-    UIColor *dotColor = isFourFingers ? [UIColor systemGreenColor] : [[UIColor systemCyanColor] colorWithAlphaComponent:0.8];
-    _touchCountLabel.text = [NSString stringWithFormat:@"Touches detected: %lu / 4", (unsigned long)allTouches.count];
-    _touchCountLabel.textColor = isFourFingers ? [UIColor systemGreenColor] : [UIColor lightGrayColor];
+    UIColor *greenFlash = [UIColor colorWithRed:0.0 green:1.0 blue:0.55 alpha:1.0];
+    UIColor *dotColor = isFourFingers ? [greenFlash colorWithAlphaComponent:0.9] : [self.perfTeal colorWithAlphaComponent:0.85];
+
+    _touchCountLabel.text = [NSString stringWithFormat:@"Touches: %lu / 4", (unsigned long)allTouches.count];
+    _touchCountLabel.textColor = isFourFingers ? greenFlash : [self.perfTeal colorWithAlphaComponent:0.9];
+
     for (UITouch *touch in allTouches) {
         if (touch.phase == UITouchPhaseBegan || touch.phase == UITouchPhaseMoved || touch.phase == UITouchPhaseStationary) {
             CGPoint loc = [touch locationInView:self];
-            UIView *dot = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 50, 50)];
+            UIView *dot = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 56, 56)];
             dot.center = loc;
             dot.tag = 7777;
             dot.backgroundColor = dotColor;
-            dot.layer.cornerRadius = 25;
+            dot.layer.cornerRadius = 28;
             dot.layer.borderWidth = 2.5;
             dot.layer.borderColor = [UIColor whiteColor].CGColor;
+            dot.layer.shadowColor = dotColor.CGColor;
+            dot.layer.shadowRadius = 20;
+            dot.layer.shadowOpacity = 0.85;
+            dot.layer.shadowOffset = CGSizeZero;
             dot.userInteractionEnabled = NO;
             [self addSubview:dot];
         }
     }
+
     if (isFourFingers && !_isTriggered) {
         _isTriggered = YES;
-        UIImpactFeedbackGenerator *feedback = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleMedium];
+        UIImpactFeedbackGenerator *feedback = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleHeavy];
         [feedback impactOccurred];
-        [UIView animateWithDuration:0.25 animations:^{
-            self->_headerInstructionLabel.backgroundColor = [[UIColor systemGreenColor] colorWithAlphaComponent:0.35];
-            self->_headerInstructionLabel.layer.borderColor = [UIColor systemGreenColor].CGColor;
-            self->_headerInstructionLabel.textColor = [UIColor systemGreenColor];
-            self->_headerInstructionLabel.text = @"✓ 4-Finger gesture detected! Launching...";
+
+        [UIView animateWithDuration:0.2 animations:^{
+            self->_headerPill.backgroundColor = [greenFlash colorWithAlphaComponent:0.35];
+            self->_headerPill.layer.borderColor = greenFlash.CGColor;
+            self->_headerPill.layer.shadowColor = greenFlash.CGColor;
+            self->_headerLabel.text = @"✓   Gesture detected! Launching...   ✓";
+            self->_headerLabel.textColor = greenFlash;
         }];
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.8 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             if (self.onCompleted) self.onCompleted();
         });
     }
@@ -360,7 +454,7 @@ static UIWindow *flashWindow = nil;
 
 @end
 
-// ===== SECRET MENU (Liquid Glass + Dark Mode) =====
+// ===== SECRET MENU =====
 @interface PerfFullScreenMenuView : UIView
 @property (nonatomic, copy) void (^onClose)(void);
 @property (nonatomic, copy) void (^onRunTest)(void);
@@ -387,7 +481,11 @@ static UIWindow *flashWindow = nil;
 }
 
 - (UIColor *)perfTeal { return [UIColor colorWithRed:0.0 green:0.78 blue:0.70 alpha:1.0]; }
-- (BOOL)isDarkMode { return [[NSUserDefaults standardUserDefaults] boolForKey:@"perf_dark_mode"]; }
+- (BOOL)isDarkMode {
+    NSUserDefaults *defs = [NSUserDefaults standardUserDefaults];
+    if ([defs objectForKey:@"perf_dark_mode"] == nil) return YES;
+    return [defs boolForKey:@"perf_dark_mode"];
+}
 
 - (instancetype)initWithFrame:(CGRect)frame {
     if (self = [super initWithFrame:frame]) {
@@ -743,7 +841,7 @@ static UIWindow *flashWindow = nil;
         @{@"key": @"perf_show_ram",  @"label": @"Show RAM Usage",            @"def": @YES},
         @{@"key": @"perf_show_temp", @"label": @"Show Thermal State",        @"def": @YES},
         @{@"key": @"perf_show_fps",  @"label": @"Show Render FPS",           @"def": @NO},
-        @{@"key": @"perf_dark_mode", @"label": @"Dark Mode (Liquid Glass)",  @"def": @NO}
+        @{@"key": @"perf_dark_mode", @"label": @"Dark Mode (Liquid Glass)",  @"def": @YES}
     ];
     for (NSDictionary *cfg in switchesConfig) {
         UIView *row = [[UIView alloc] initWithFrame:CGRectMake(0, sY, width, 42)];
@@ -1110,14 +1208,12 @@ static UIWindow *flashWindow = nil;
     UIView *rootView = flashWindow.rootViewController.view;
     CGRect bounds = flashWindow.bounds;
 
-    // Full-screen green Liquid Glass
-    UIVisualEffectView *glass = [[UIVisualEffectView alloc] initWithEffect:PerfGlassEffect(NO)];
+    UIVisualEffectView *glass = [[UIVisualEffectView alloc] initWithEffect:PerfGlassEffect(YES)];
     glass.frame = bounds;
     glass.contentView.backgroundColor = [UIColor colorWithRed:0.0 green:0.78 blue:0.70 alpha:0.30];
     glass.alpha = 0.0;
     [rootView addSubview:glass];
 
-    // Green pulsing rings at each touch point
     NSMutableArray<UIView *> *rings = [NSMutableArray array];
     for (NSValue *val in touchPoints) {
         CGPoint p = [val CGPointValue];
@@ -1147,7 +1243,6 @@ static UIWindow *flashWindow = nil;
             r.transform = CGAffineTransformMakeScale(1.0, 1.0);
         }
     } completion:^(BOOL finished) {
-        // Hold briefly, then fade out and open menu
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             [UIView animateWithDuration:0.25 delay:0 options:UIViewAnimationOptionCurveEaseIn animations:^{
                 glass.alpha = 0.0;
@@ -1206,7 +1301,6 @@ static UIWindow *flashWindow = nil;
     if (sender.state != UIGestureRecognizerStateBegan) return;
     if (fullScreenMenuWindow) return;
 
-    // Collect all 4 touch points in window coordinates
     NSMutableArray<NSValue *> *points = [NSMutableArray array];
     NSUInteger touchCount = sender.numberOfTouches;
     UIView *view = sender.view;
@@ -1214,14 +1308,12 @@ static UIWindow *flashWindow = nil;
         CGPoint p = [sender locationOfTouch:i inView:view];
         [points addObject:[NSValue valueWithCGPoint:p]];
     }
-    // Fallback: if no touch points (shouldn't happen), use center
     if (points.count == 0) {
         CGPoint center = CGPointMake([UIScreen mainScreen].bounds.size.width / 2.0,
                                      [UIScreen mainScreen].bounds.size.height / 2.0);
         [points addObject:[NSValue valueWithCGPoint:center]];
     }
 
-    // Dismiss tutorial in parallel (fire & forget)
     if (tutorialWindow) {
         [PerfMonitorManager setTutorialCompleted];
         [UIView animateWithDuration:0.3 animations:^{
@@ -1232,7 +1324,6 @@ static UIWindow *flashWindow = nil;
         }];
     }
 
-    // Show green Liquid Glass flash → then open menu
     [self showGreenGlassFlashForTouches:points completion:^{
         [self openMenuNow];
     }];
@@ -1284,9 +1375,12 @@ __attribute__((constructor)) static void tweakEntry() {
 
         UILongPressGestureRecognizer *fourFingerLongPress = [[UILongPressGestureRecognizer alloc] initWithTarget:[PerfMonitorGestureHandler class] action:@selector(handleFourFingerLongPress:)];
         fourFingerLongPress.numberOfTouchesRequired = 4;
-        fourFingerLongPress.minimumPressDuration = 0.6;   // skrócone z 2.0s
-        fourFingerLongPress.allowableMovement = 40.0;     // tolerancja drgań palców
+        fourFingerLongPress.minimumPressDuration = 0.6;
+        fourFingerLongPress.allowableMovement = 40.0;
         [targetWindow addGestureRecognizer:fourFingerLongPress];
+
+        // Tap only fires if long press hasn't succeeded → prevents double-toggle
+        [fourFingerTap requireGestureRecognizerToFail:fourFingerLongPress];
 
         [[NSNotificationCenter defaultCenter] addObserver:[PerfMonitorGestureHandler class]
                                                  selector:@selector(handleOrientationChange:)
