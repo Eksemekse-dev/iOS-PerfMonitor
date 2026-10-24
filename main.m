@@ -5,93 +5,166 @@
 #include <unistd.h>
 #include <dlfcn.h>
 
-// Color resolution helper for PiP presets
+// IOKit types (declared manually to avoid linking IOKit headers)
+typedef mach_port_t io_object_t;
+typedef mach_port_t io_iterator_t;
+typedef mach_port_t io_registry_entry_t;
+
+// ===== Color helper =====
 static inline UIColor *getPerfColorForIndex(NSInteger idx, CGFloat alpha) {
     switch (idx) {
-        case 1: return [[UIColor colorWithRed:0.06 green:0.09 blue:0.18 alpha:1.0] colorWithAlphaComponent:alpha]; // Dark Slate
-        case 2: return [[UIColor colorWithRed:0.03 green:0.20 blue:0.27 alpha:1.0] colorWithAlphaComponent:alpha]; // Cyber Cyan
-        case 3: return [[UIColor colorWithRed:0.18 green:0.06 blue:0.38 alpha:1.0] colorWithAlphaComponent:alpha]; // Neon Purple
-        case 4: return [[UIColor colorWithRed:0.02 green:0.28 blue:0.20 alpha:1.0] colorWithAlphaComponent:alpha]; // Emerald
-        case 5: return [[UIColor colorWithRed:0.28 green:0.04 blue:0.04 alpha:1.0] colorWithAlphaComponent:alpha]; // Crimson
-        default: return [[UIColor blackColor] colorWithAlphaComponent:alpha]; // OLED Black
+        case 1: return [[UIColor colorWithRed:0.06 green:0.09 blue:0.18 alpha:1.0] colorWithAlphaComponent:alpha];
+        case 2: return [[UIColor colorWithRed:0.03 green:0.20 blue:0.27 alpha:1.0] colorWithAlphaComponent:alpha];
+        case 3: return [[UIColor colorWithRed:0.18 green:0.06 blue:0.38 alpha:1.0] colorWithAlphaComponent:alpha];
+        case 4: return [[UIColor colorWithRed:0.02 green:0.28 blue:0.20 alpha:1.0] colorWithAlphaComponent:alpha];
+        case 5: return [[UIColor colorWithRed:0.28 green:0.04 blue:0.04 alpha:1.0] colorWithAlphaComponent:alpha];
+        default: return [[UIColor blackColor] colorWithAlphaComponent:alpha];
     }
 }
 
-// Dynamic Hardware GPU Usage percentage detector on iOS
-static float getGPUUsagePercentage(void) {
-    static float s_lastGpu = 0.0f;
-    @try {
-        typedef mach_port_t (*IOServiceMatching_t)(const char *name);
-        typedef mach_port_t (*IOServiceGetMatchingService_t)(mach_port_t, CFDictionaryRef);
-        typedef kern_return_t (*IORegistryEntryCreateCFProperties_t)(mach_port_t, CFMutableDictionaryRef *, CFAllocatorRef, uint32_t);
-        typedef kern_return_t (*IOObjectRelease_t)(mach_port_t);
-
-        static IOServiceMatching_t p_IOServiceMatching = NULL;
-        static IOServiceGetMatchingService_t p_IOServiceGetMatchingService = NULL;
-        static IORegistryEntryCreateCFProperties_t p_IORegistryEntryCreateCFProperties = NULL;
-        static IOObjectRelease_t p_IOObjectRelease = NULL;
-        static BOOL p_inited = NO;
-
-        if (!p_inited) {
-            p_inited = YES;
-            p_IOServiceMatching = (IOServiceMatching_t)dlsym(RTLD_DEFAULT, "IOServiceMatching");
-            p_IOServiceGetMatchingService = (IOServiceGetMatchingService_t)dlsym(RTLD_DEFAULT, "IOServiceGetMatchingService");
-            p_IORegistryEntryCreateCFProperties = (IORegistryEntryCreateCFProperties_t)dlsym(RTLD_DEFAULT, "IORegistryEntryCreateCFProperties");
-            p_IOObjectRelease = (IOObjectRelease_t)dlsym(RTLD_DEFAULT, "IOObjectRelease");
+// ===== GPU usage via IOKit IOAccelerator (returns -1 if unavailable) =====
+static double getGPUUsagePercent(void) {
+    static void *iokitHandle = NULL;
+    static BOOL iokitTried = NO;
+    if (!iokitTried) {
+        iokitTried = YES;
+        const char *paths[] = {
+            "/System/Library/PrivateFrameworks/IOKit.framework/IOKit",
+            "/System/Library/Frameworks/IOKit.framework/IOKit"
+        };
+        for (int i = 0; i < 2; i++) {
+            iokitHandle = dlopen(paths[i], RTLD_LAZY);
+            if (iokitHandle) break;
         }
+    }
+    if (!iokitHandle) return -1.0;
 
-        if (p_IOServiceMatching && p_IOServiceGetMatchingService && p_IORegistryEntryCreateCFProperties) {
-            CFMutableDictionaryRef matching = (CFMutableDictionaryRef)p_IOServiceMatching("IOAccelerator");
-            if (matching) {
-                mach_port_t service = p_IOServiceGetMatchingService(0, matching);
-                if (service) {
-                    CFMutableDictionaryRef props = NULL;
-                    if (p_IORegistryEntryCreateCFProperties(service, &props, kCFAllocatorDefault, 0) == 0 && props) {
-                        NSDictionary *dict = (__bridge_transfer NSDictionary *)props;
-                        NSDictionary *perfStats = dict[@"PerformanceStatistics"];
-                        if (perfStats && [perfStats isKindOfClass:[NSDictionary class]]) {
-                            NSNumber *util = perfStats[@"Device Utilization %"] ?: perfStats[@"GPU Core Utilization %"] ?: perfStats[@"GpuCoreUtilization"];
-                            if (util) {
-                                s_lastGpu = [util floatValue];
-                                if (p_IOObjectRelease) p_IOObjectRelease(service);
-                                return s_lastGpu;
-                            }
-                        }
-                    }
-                    if (p_IOObjectRelease) p_IOObjectRelease(service);
+    typedef CFMutableDictionaryRef (*IOServiceMatchingF)(const char *);
+    typedef int (*IOServiceGetMatchingServicesF)(mach_port_t, CFDictionaryRef, io_iterator_t *);
+    typedef io_object_t (*IOIteratorNextF)(io_iterator_t);
+    typedef CFTypeRef (*IORegistryEntryCreateCFPropertyF)(io_registry_entry_t, CFStringRef, CFAllocatorRef, uint32_t);
+    typedef int (*IOObjectReleaseF)(io_object_t);
+
+    static IOServiceMatchingF pMatching = NULL;
+    static IOServiceGetMatchingServicesF pGetServices = NULL;
+    static IOIteratorNextF pNext = NULL;
+    static IORegistryEntryCreateCFPropertyF pGetProp = NULL;
+    static IOObjectReleaseF pRelease = NULL;
+
+    if (!pMatching) {
+        pMatching = (IOServiceMatchingF)dlsym(iokitHandle, "IOServiceMatching");
+        pGetServices = (IOServiceGetMatchingServicesF)dlsym(iokitHandle, "IOServiceGetMatchingServices");
+        pNext = (IOIteratorNextF)dlsym(iokitHandle, "IOIteratorNext");
+        pGetProp = (IORegistryEntryCreateCFPropertyF)dlsym(iokitHandle, "IORegistryEntryCreateCFProperty");
+        pRelease = (IOObjectReleaseF)dlsym(iokitHandle, "IOObjectRelease");
+    }
+    if (!pMatching || !pGetServices || !pNext || !pGetProp || !pRelease) return -1.0;
+
+    CFMutableDictionaryRef matching = pMatching("IOAccelerator");
+    if (!matching) return -1.0;
+
+    io_iterator_t iterator = 0;
+    if (pGetServices(0, matching, &iterator) != 0) {
+        CFRelease(matching);
+        return -1.0;
+    }
+
+    double result = -1.0;
+    io_object_t service;
+    while ((service = pNext(iterator)) != 0) {
+        CFTypeRef stats = pGetProp(service, CFSTR("PerformanceStatistics"), NULL, 0);
+        if (stats) {
+            if (CFGetTypeID(stats) == CFDictionaryGetTypeID()) {
+                NSDictionary *dict = (__bridge_transfer NSDictionary *)stats;
+                NSNumber *util = dict[@"Device Utilization %"];
+                if (!util) util = dict[@"Renderer Utilization %"];
+                if (!util) util = dict[@"GPU Utilization %"];
+                if (util) {
+                    result = util.doubleValue;
+                    pRelease(service);
+                    break;
                 }
+            } else {
+                CFRelease(stats);
             }
         }
-    } @catch (NSException *ex) {}
-    return s_lastGpu;
+        pRelease(service);
+    }
+    pRelease(iterator);
+    return result;
 }
 
-// ===== TUTORIAL OVERLAY =====
+// ===== Liquid Glass helpers =====
+static UIVisualEffect *PerfGlassEffect(BOOL dark) {
+    Class glassClass = NSClassFromString(@"UIGlassEffect");
+    if (glassClass) {
+        @try {
+            SEL sel = NSSelectorFromString(@"effectWithStyle:");
+            if ([glassClass respondsToSelector:sel]) {
+                typedef id (*F)(id, SEL, NSInteger);
+                F f = (F)[glassClass methodForSelector:sel];
+                id e = f(glassClass, sel, 0);
+                if ([e isKindOfClass:[UIVisualEffect class]]) return (UIVisualEffect *)e;
+            }
+            id e = [[glassClass alloc] init];
+            if ([e isKindOfClass:[UIVisualEffect class]]) return (UIVisualEffect *)e;
+        } @catch (NSException *ex) { NSLog(@"[PerfMonitor] UIGlassEffect err: %@", ex); }
+    }
+    if (@available(iOS 13.0, *)) {
+        return [UIBlurEffect effectWithStyle:dark ? UIBlurEffectStyleSystemThinMaterialDark : UIBlurEffectStyleSystemThinMaterialLight];
+    }
+    return [UIBlurEffect effectWithStyle:UIBlurEffectStyleDark];
+}
+
+static UIVisualEffectView *PerfGlassPanel(CGRect frame, CGFloat cr, BOOL dark) {
+    UIVisualEffectView *p = [[UIVisualEffectView alloc] initWithEffect:PerfGlassEffect(dark)];
+    p.frame = frame;
+    p.layer.cornerRadius = cr;
+    p.layer.masksToBounds = YES;
+    p.layer.borderWidth = 0.8;
+    p.layer.borderColor = (dark
+        ? [[UIColor whiteColor] colorWithAlphaComponent:0.15]
+        : [[UIColor whiteColor] colorWithAlphaComponent:0.5]).CGColor;
+    p.contentView.backgroundColor = dark
+        ? [UIColor colorWithWhite:1.0 alpha:0.05]
+        : [UIColor colorWithWhite:1.0 alpha:0.15];
+    return p;
+}
+
+// ===== TUTORIAL =====
 @interface PerfTutorialView : UIView
 @property (nonatomic, copy) void (^onCompleted)(void);
 - (void)clearDots;
 @end
 
 @implementation PerfTutorialView {
-    UIVisualEffectView *_bgBlur;
-    UIView *_guideCard;
-    UILabel *_headerInstructionLabel;
+    UIVisualEffectView *_bgGlass;
+    UIView *_headerPill;
+    UILabel *_headerLabel;
+    UIVisualEffectView *_cardView;
     UILabel *_touchCountLabel;
     UIButton *_skipButton;
     BOOL _isTriggered;
 }
 
+- (UIColor *)perfTeal { return [UIColor colorWithRed:0.0 green:0.78 blue:0.70 alpha:1.0]; }
+- (BOOL)isDarkMode {
+    NSUserDefaults *defs = [NSUserDefaults standardUserDefaults];
+    if ([defs objectForKey:@"perf_dark_mode"] == nil) return YES;
+    return [defs boolForKey:@"perf_dark_mode"];
+}
+
 - (instancetype)initWithFrame:(CGRect)frame {
     if (self = [super initWithFrame:frame]) {
-        self.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.85];
         self.multipleTouchEnabled = YES;
         _isTriggered = NO;
+        BOOL dark = [self isDarkMode];
 
-        UIBlurEffect *blur = [UIBlurEffect effectWithStyle:UIBlurEffectStyleDark];
-        _bgBlur = [[UIVisualEffectView alloc] initWithEffect:blur];
-        _bgBlur.frame = self.bounds;
-        _bgBlur.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-        [self addSubview:_bgBlur];
+        _bgGlass = [[UIVisualEffectView alloc] initWithEffect:PerfGlassEffect(dark)];
+        _bgGlass.frame = self.bounds;
+        _bgGlass.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        _bgGlass.contentView.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.55];
+        [self addSubview:_bgGlass];
 
         UIEdgeInsets safeInsets = UIEdgeInsetsZero;
         if (@available(iOS 13.0, *)) {
@@ -102,72 +175,136 @@ static float getGPUUsagePercentage(void) {
                 }
             }
         }
-        CGFloat topY = safeInsets.top > 0 ? safeInsets.top + 10 : 40;
+        CGFloat topY = safeInsets.top > 0 ? safeInsets.top + 8 : 32;
+        CGFloat L = 24, R = 24;
+        CGFloat contentW = frame.size.width - L - R;
 
-        _headerInstructionLabel = [[UILabel alloc] initWithFrame:CGRectMake(24, topY, frame.size.width - 48, 44)];
-        _headerInstructionLabel.backgroundColor = [[UIColor colorWithRed:0.0 green:0.48 blue:1.0 alpha:0.25] colorWithAlphaComponent:0.3];
-        _headerInstructionLabel.textColor = [UIColor whiteColor];
-        _headerInstructionLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightBold];
-        _headerInstructionLabel.textAlignment = NSTextAlignmentCenter;
-        _headerInstructionLabel.layer.cornerRadius = 22;
-        _headerInstructionLabel.layer.masksToBounds = YES;
-        _headerInstructionLabel.layer.borderWidth = 1.0;
-        _headerInstructionLabel.layer.borderColor = [UIColor colorWithRed:0.0 green:0.48 blue:1.0 alpha:0.5].CGColor;
-        _headerInstructionLabel.text = @"Touch with 4 fingers to test gesture";
-        [self addSubview:_headerInstructionLabel];
+        _headerPill = [[UIView alloc] initWithFrame:CGRectMake(L, topY, contentW, 44)];
+        _headerPill.backgroundColor = [self.perfTeal colorWithAlphaComponent:0.22];
+        _headerPill.layer.cornerRadius = 22;
+        _headerPill.layer.borderWidth = 1.0;
+        _headerPill.layer.borderColor = [self.perfTeal colorWithAlphaComponent:0.5].CGColor;
+        _headerPill.layer.shadowColor = self.perfTeal.CGColor;
+        _headerPill.layer.shadowRadius = 12;
+        _headerPill.layer.shadowOpacity = 0.3;
+        _headerPill.layer.shadowOffset = CGSizeZero;
+        [self addSubview:_headerPill];
 
-        CGFloat cardW = frame.size.width - 48;
-        CGFloat cardH = 260;
-        _guideCard = [[UIView alloc] initWithFrame:CGRectMake(24, (frame.size.height - cardH) / 2.0 - 20, cardW, cardH)];
-        _guideCard.backgroundColor = [UIColor colorWithRed:0.12 green:0.12 blue:0.14 alpha:0.95];
-        _guideCard.layer.cornerRadius = 24;
-        _guideCard.layer.borderWidth = 0.5;
-        _guideCard.layer.borderColor = [[UIColor whiteColor] colorWithAlphaComponent:0.18].CGColor;
-        _guideCard.userInteractionEnabled = NO;
-        [self addSubview:_guideCard];
+        _headerLabel = [[UILabel alloc] initWithFrame:_headerPill.bounds];
+        _headerLabel.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        _headerLabel.text = @"✦   Touch with 4 fingers to try   ✦";
+        _headerLabel.textColor = [UIColor whiteColor];
+        _headerLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightSemibold];
+        _headerLabel.textAlignment = NSTextAlignmentCenter;
+        [_headerPill addSubview:_headerLabel];
 
-        UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(20, 20, cardW - 40, 26)];
-        title.text = @"iOS PerfMonitor Gestures";
-        title.textColor = [UIColor systemBlueColor];
-        title.font = [UIFont systemFontOfSize:18 weight:UIFontWeightBold];
-        title.textAlignment = NSTextAlignmentCenter;
-        [_guideCard addSubview:title];
+        CGFloat cardH = 360;
+        CGFloat cardY = topY + 58 + ((frame.size.height - cardH - topY - 110) / 2.0);
+        if (cardY < topY + 58) cardY = topY + 58;
 
-        UILabel *steps = [[UILabel alloc] initWithFrame:CGRectMake(20, 56, cardW - 40, 130)];
-        steps.textColor = [UIColor whiteColor];
-        steps.font = [UIFont systemFontOfSize:14 weight:UIFontWeightMedium];
-        steps.numberOfLines = 0;
-        steps.text = @"• 4-Finger Tap: Toggle floating PiP monitor\n\n• 4-Finger Hold (0.6s): Open Secret Menu & Settings\n\n• Drag anywhere: Freely reposition PiP on screen";
-        [_guideCard addSubview:steps];
+        _cardView = PerfGlassPanel(CGRectMake(L, cardY, contentW, cardH), 24, dark);
+        [self addSubview:_cardView];
 
-        _touchCountLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, cardH - 52, cardW - 40, 34)];
-        _touchCountLabel.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.5];
-        _touchCountLabel.textColor = [UIColor lightGrayColor];
-        _touchCountLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightBold];
+        UIView *iconCircle = [[UIView alloc] initWithFrame:CGRectMake(contentW/2.0 - 24, 20, 48, 48)];
+        iconCircle.backgroundColor = [self.perfTeal colorWithAlphaComponent:0.22];
+        iconCircle.layer.cornerRadius = 24;
+        iconCircle.layer.borderWidth = 1.0;
+        iconCircle.layer.borderColor = [self.perfTeal colorWithAlphaComponent:0.6].CGColor;
+        [_cardView.contentView addSubview:iconCircle];
+
+        UILabel *iconEmoji = [[UILabel alloc] initWithFrame:iconCircle.bounds];
+        iconEmoji.text = @"✋";
+        iconEmoji.font = [UIFont systemFontOfSize:24];
+        iconEmoji.textAlignment = NSTextAlignmentCenter;
+        [iconCircle addSubview:iconEmoji];
+
+        UILabel *titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, 78, contentW - 40, 28)];
+        titleLabel.text = @"Welcome to Secret Menu";
+        titleLabel.textColor = dark ? [UIColor whiteColor] : [UIColor blackColor];
+        titleLabel.font = [UIFont systemFontOfSize:22 weight:UIFontWeightHeavy];
+        titleLabel.textAlignment = NSTextAlignmentCenter;
+        [_cardView.contentView addSubview:titleLabel];
+
+        UILabel *subtitleLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, 108, contentW - 40, 18)];
+        subtitleLabel.text = @"Master the 4-finger secrets";
+        subtitleLabel.textColor = dark ? [[UIColor whiteColor] colorWithAlphaComponent:0.65] : [[UIColor blackColor] colorWithAlphaComponent:0.55];
+        subtitleLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
+        subtitleLabel.textAlignment = NSTextAlignmentCenter;
+        [_cardView.contentView addSubview:subtitleLabel];
+
+        UIView *divider1 = [[UIView alloc] initWithFrame:CGRectMake(20, 138, contentW - 40, 0.6)];
+        divider1.backgroundColor = dark ? [[UIColor whiteColor] colorWithAlphaComponent:0.15] : [[UIColor blackColor] colorWithAlphaComponent:0.08];
+        [_cardView.contentView addSubview:divider1];
+
+        NSArray *gestures = @[
+            @{@"emoji": @"👆", @"title": @"4-Finger Tap", @"desc": @"Toggle floating PiP monitor"},
+            @{@"emoji": @"✋", @"title": @"4-Finger Hold (0.6s)", @"desc": @"Open Secret Menu"},
+            @{@"emoji": @"↔️", @"title": @"Drag PiP Widget", @"desc": @"Move it anywhere on screen"}
+        ];
+
+        CGFloat rowY = 150;
+        for (NSDictionary *g in gestures) {
+            UIView *emojiCircle = [[UIView alloc] initWithFrame:CGRectMake(24, rowY + 6, 36, 36)];
+            emojiCircle.backgroundColor = [self.perfTeal colorWithAlphaComponent:0.15];
+            emojiCircle.layer.cornerRadius = 18;
+            [_cardView.contentView addSubview:emojiCircle];
+
+            UILabel *emoji = [[UILabel alloc] initWithFrame:emojiCircle.bounds];
+            emoji.text = g[@"emoji"];
+            emoji.font = [UIFont systemFontOfSize:18];
+            emoji.textAlignment = NSTextAlignmentCenter;
+            [emojiCircle addSubview:emoji];
+
+            UILabel *rowTitle = [[UILabel alloc] initWithFrame:CGRectMake(72, rowY + 6, contentW - 88, 18)];
+            rowTitle.text = g[@"title"];
+            rowTitle.textColor = dark ? [UIColor whiteColor] : [UIColor blackColor];
+            rowTitle.font = [UIFont systemFontOfSize:14 weight:UIFontWeightHeavy];
+            [_cardView.contentView addSubview:rowTitle];
+
+            UILabel *rowDesc = [[UILabel alloc] initWithFrame:CGRectMake(72, rowY + 24, contentW - 88, 16)];
+            rowDesc.text = g[@"desc"];
+            rowDesc.textColor = dark ? [[UIColor whiteColor] colorWithAlphaComponent:0.55] : [[UIColor blackColor] colorWithAlphaComponent:0.5];
+            rowDesc.font = [UIFont systemFontOfSize:12 weight:UIFontWeightRegular];
+            [_cardView.contentView addSubview:rowDesc];
+
+            rowY += 58;
+        }
+
+        UIView *divider2 = [[UIView alloc] initWithFrame:CGRectMake(20, rowY + 4, contentW - 40, 0.6)];
+        divider2.backgroundColor = dark ? [[UIColor whiteColor] colorWithAlphaComponent:0.15] : [[UIColor blackColor] colorWithAlphaComponent:0.08];
+        [_cardView.contentView addSubview:divider2];
+
+        _touchCountLabel = [[UILabel alloc] initWithFrame:CGRectMake(contentW/2.0 - 80, rowY + 18, 160, 34)];
+        _touchCountLabel.backgroundColor = dark ? [[UIColor blackColor] colorWithAlphaComponent:0.35] : [[UIColor blackColor] colorWithAlphaComponent:0.08];
+        _touchCountLabel.textColor = [self.perfTeal colorWithAlphaComponent:0.9];
+        _touchCountLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightBold];
         _touchCountLabel.textAlignment = NSTextAlignmentCenter;
         _touchCountLabel.layer.cornerRadius = 17;
         _touchCountLabel.layer.masksToBounds = YES;
-        _touchCountLabel.text = @"Touches detected: 0 / 4";
-        [_guideCard addSubview:_touchCountLabel];
+        _touchCountLabel.text = @"Touches: 0 / 4";
+        [_cardView.contentView addSubview:_touchCountLabel];
 
-        _skipButton = [UIButton buttonWithType:UIButtonTypeSystem];
-        _skipButton.frame = CGRectMake((frame.size.width - 150) / 2.0, CGRectGetMaxY(_guideCard.frame) + 30, 150, 44);
-        _skipButton.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.15];
+        CGFloat skipY = cardY + cardH + 20;
+        _skipButton = [UIButton buttonWithType:UIButtonTypeCustom];
+        _skipButton.frame = CGRectMake(L, skipY, contentW, 50);
+        _skipButton.backgroundColor = self.perfTeal;
+        _skipButton.layer.cornerRadius = 25;
+        _skipButton.layer.borderWidth = 0.8;
+        _skipButton.layer.borderColor = [[UIColor whiteColor] colorWithAlphaComponent:0.4].CGColor;
+        _skipButton.layer.shadowColor = self.perfTeal.CGColor;
+        _skipButton.layer.shadowRadius = 15;
+        _skipButton.layer.shadowOpacity = 0.35;
+        _skipButton.layer.shadowOffset = CGSizeZero;
         [_skipButton setTitle:@"Skip Tutorial" forState:UIControlStateNormal];
         [_skipButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-        _skipButton.titleLabel.font = [UIFont systemFontOfSize:15 weight:UIFontWeightBold];
-        _skipButton.layer.cornerRadius = 22;
-        _skipButton.layer.borderWidth = 0.5;
-        _skipButton.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.3].CGColor;
+        _skipButton.titleLabel.font = [UIFont systemFontOfSize:17 weight:UIFontWeightSemibold];
         [_skipButton addTarget:self action:@selector(skipTapped) forControlEvents:UIControlEventTouchUpInside];
         [self addSubview:_skipButton];
     }
     return self;
 }
 
-- (void)skipTapped {
-    if (self.onCompleted) self.onCompleted();
-}
+- (void)skipTapped { if (self.onCompleted) self.onCompleted(); }
 
 - (void)clearDots {
     for (UIView *subview in [self.subviews copy]) {
@@ -175,30 +312,35 @@ static float getGPUUsagePercentage(void) {
     }
 }
 
-- (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event { [self renderTouches:event]; }
-- (void)touchesMoved:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event { [self renderTouches:event]; }
-- (void)touchesEnded:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event { [self renderTouches:event]; }
+- (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event { [self renderTouchesFromEvent:event]; }
+- (void)touchesMoved:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event { [self renderTouchesFromEvent:event]; }
+- (void)touchesEnded:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event { [self renderTouchesFromEvent:event]; }
 - (void)touchesCancelled:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event { [self clearDots]; }
 
-- (void)renderTouches:(UIEvent *)event {
+- (void)renderTouchesFromEvent:(UIEvent *)event {
     [self clearDots];
     NSSet<UITouch *> *allTouches = event.allTouches;
     BOOL isFourFingers = (allTouches.count >= 4);
-    UIColor *dotColor = isFourFingers ? [UIColor systemGreenColor] : [UIColor systemBlueColor];
+    UIColor *greenFlash = [UIColor colorWithRed:0.0 green:1.0 blue:0.55 alpha:1.0];
+    UIColor *dotColor = isFourFingers ? [greenFlash colorWithAlphaComponent:0.9] : [self.perfTeal colorWithAlphaComponent:0.85];
 
-    _touchCountLabel.text = [NSString stringWithFormat:@"Touches detected: %lu / 4", (unsigned long)allTouches.count];
-    _touchCountLabel.textColor = isFourFingers ? [UIColor systemGreenColor] : [UIColor lightGrayColor];
+    _touchCountLabel.text = [NSString stringWithFormat:@"Touches: %lu / 4", (unsigned long)allTouches.count];
+    _touchCountLabel.textColor = isFourFingers ? greenFlash : [self.perfTeal colorWithAlphaComponent:0.9];
 
     for (UITouch *touch in allTouches) {
         if (touch.phase == UITouchPhaseBegan || touch.phase == UITouchPhaseMoved || touch.phase == UITouchPhaseStationary) {
             CGPoint loc = [touch locationInView:self];
-            UIView *dot = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 52, 52)];
+            UIView *dot = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 56, 56)];
             dot.center = loc;
             dot.tag = 7777;
-            dot.backgroundColor = [dotColor colorWithAlphaComponent:0.8];
-            dot.layer.cornerRadius = 26;
+            dot.backgroundColor = dotColor;
+            dot.layer.cornerRadius = 28;
             dot.layer.borderWidth = 2.5;
             dot.layer.borderColor = [UIColor whiteColor].CGColor;
+            dot.layer.shadowColor = dotColor.CGColor;
+            dot.layer.shadowRadius = 20;
+            dot.layer.shadowOpacity = 0.85;
+            dot.layer.shadowOffset = CGSizeZero;
             dot.userInteractionEnabled = NO;
             [self addSubview:dot];
         }
@@ -206,16 +348,15 @@ static float getGPUUsagePercentage(void) {
 
     if (isFourFingers && !_isTriggered) {
         _isTriggered = YES;
-        @try {
-            UIImpactFeedbackGenerator *gen = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleMedium];
-            [gen impactOccurred];
-        } @catch (NSException *e) {}
+        UIImpactFeedbackGenerator *feedback = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleHeavy];
+        [feedback impactOccurred];
 
-        [UIView animateWithDuration:0.25 animations:^{
-            self->_headerInstructionLabel.backgroundColor = [[UIColor systemGreenColor] colorWithAlphaComponent:0.35];
-            self->_headerInstructionLabel.layer.borderColor = [UIColor systemGreenColor].CGColor;
-            self->_headerInstructionLabel.textColor = [UIColor systemGreenColor];
-            self->_headerInstructionLabel.text = @"✓ 4-Finger gesture detected! Launching...";
+        [UIView animateWithDuration:0.2 animations:^{
+            self->_headerPill.backgroundColor = [greenFlash colorWithAlphaComponent:0.35];
+            self->_headerPill.layer.borderColor = greenFlash.CGColor;
+            self->_headerPill.layer.shadowColor = greenFlash.CGColor;
+            self->_headerLabel.text = @"✓   Gesture detected! Launching...   ✓";
+            self->_headerLabel.textColor = greenFlash;
         }];
 
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.8 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
@@ -226,7 +367,7 @@ static float getGPUUsagePercentage(void) {
 
 @end
 
-// ===== FLOATING PIP MONITOR =====
+// ===== PiP MONITOR =====
 @interface PerfMonitorView : UIView
 @property (nonatomic, strong) UILabel *infoLabel;
 @property (nonatomic, strong) NSTimer *timer;
@@ -247,6 +388,7 @@ static PerfMonitorWindow *sharedMonitorWindow = nil;
 static PerfMonitorView *sharedMonitorView = nil;
 static UIWindow *fullScreenMenuWindow = nil;
 static UIWindow *tutorialWindow = nil;
+static UIWindow *flashWindow = nil;
 
 @implementation PerfMonitorView {
     CGPoint _initialCenter;
@@ -263,10 +405,8 @@ static UIWindow *tutorialWindow = nil;
         self.layer.borderWidth = 1.0;
         self.layer.borderColor = [[UIColor whiteColor] colorWithAlphaComponent:0.3].CGColor;
         self.userInteractionEnabled = YES;
-
         UIPanGestureRecognizer *panGesture = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handlePan:)];
         [self addGestureRecognizer:panGesture];
-
         _infoLabel = [[UILabel alloc] initWithFrame:self.bounds];
         _infoLabel.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
         _infoLabel.textColor = [UIColor whiteColor];
@@ -274,7 +414,6 @@ static UIWindow *tutorialWindow = nil;
         _infoLabel.numberOfLines = 0;
         _infoLabel.textAlignment = NSTextAlignmentCenter;
         [self addSubview:_infoLabel];
-
         _fpsFrameCount = 0;
         _fpsLastTimestamp = 0;
         _currentFps = 60;
@@ -283,7 +422,6 @@ static UIWindow *tutorialWindow = nil;
             _fpsDisplayLink = [dlClass displayLinkWithTarget:self selector:@selector(displayLinkTick:)];
             [_fpsDisplayLink addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSRunLoopCommonModes];
         }
-
         [self applySettings];
         _timer = [NSTimer scheduledTimerWithTimeInterval:1.0 target:self selector:@selector(updateStats) userInfo:nil repeats:YES];
     }
@@ -319,34 +457,27 @@ static UIWindow *tutorialWindow = nil;
     if (opacity <= 0.05f) opacity = 0.85f;
     NSInteger colorIdx = [defs integerForKey:@"perf_pip_color_idx"];
     self.backgroundColor = getPerfColorForIndex(colorIdx, opacity);
-
     float scale = [defs floatForKey:@"perf_pip_scale"];
     if (scale < 0.6f || scale > 1.6f) scale = 1.0f;
-
     BOOL showCpu = [defs objectForKey:@"perf_show_cpu"] ? [defs boolForKey:@"perf_show_cpu"] : YES;
-    BOOL showGpu = [defs objectForKey:@"perf_show_gpu"] ? [defs boolForKey:@"perf_show_gpu"] : YES;
     BOOL showRam = [defs objectForKey:@"perf_show_ram"] ? [defs boolForKey:@"perf_show_ram"] : YES;
     BOOL showTemp = [defs objectForKey:@"perf_show_temp"] ? [defs boolForKey:@"perf_show_temp"] : YES;
     BOOL showFps = [defs boolForKey:@"perf_show_fps"];
-
-    int activeCount = (showCpu ? 1 : 0) + (showGpu ? 1 : 0) + (showRam ? 1 : 0) + (showTemp ? 1 : 0) + (showFps ? 1 : 0);
+    BOOL showGpu = [defs objectForKey:@"perf_show_gpu"] ? [defs boolForKey:@"perf_show_gpu"] : YES;
+    int activeCount = (showCpu ? 1 : 0) + (showRam ? 1 : 0) + (showTemp ? 1 : 0) + (showFps ? 1 : 0) + (showGpu ? 1 : 0);
     if (activeCount == 0) activeCount = 1;
-
-    CGFloat baseH = 24 + activeCount * 17;
-    CGFloat baseW = (showFps || showGpu) ? 152 : 142;
+    CGFloat baseH = 26 + activeCount * 17;
+    CGFloat baseW = (showFps ? 150 : 142);
     CGFloat newW = round(baseW * scale);
     CGFloat newH = round(baseH * scale);
-
     self.layer.cornerRadius = 14.0f * scale;
     self.infoLabel.font = [UIFont systemFontOfSize:MAX(8.5f, 11.0f * scale) weight:UIFontWeightSemibold];
-
     if (sharedMonitorWindow) {
         CGPoint center = sharedMonitorWindow.center;
         sharedMonitorWindow.bounds = CGRectMake(0, 0, newW, newH);
         sharedMonitorWindow.center = center;
         self.frame = sharedMonitorWindow.bounds;
     }
-
     [self updateStats];
 }
 
@@ -366,7 +497,6 @@ static UIWindow *tutorialWindow = nil;
     mach_msg_type_number_t size = TASK_BASIC_INFO_COUNT;
     task_info(mach_task_self(), TASK_BASIC_INFO, (task_info_t)&info, &size);
     double ramMB = info.resident_size / (1024.0 * 1024.0);
-
     thread_array_t thread_list;
     mach_msg_type_number_t thread_count;
     float cpuUsage = 0;
@@ -382,35 +512,33 @@ static UIWindow *tutorialWindow = nil;
         }
         vm_deallocate(mach_task_self(), (vm_address_t)thread_list, thread_count * sizeof(thread_t));
     }
-
-    float gpuUsage = getGPUUsagePercentage();
-
     NSProcessInfoThermalState thermal = [[NSProcessInfo processInfo] thermalState];
     NSString *thermalStr = @"Normal";
     if (thermal == NSProcessInfoThermalStateFair) thermalStr = @"Warm";
     else if (thermal == NSProcessInfoThermalStateSerious) thermalStr = @"Hot";
     else if (thermal == NSProcessInfoThermalStateCritical) thermalStr = @"Critical!";
-
     NSUserDefaults *defs = [NSUserDefaults standardUserDefaults];
     BOOL showCpu = [defs objectForKey:@"perf_show_cpu"] ? [defs boolForKey:@"perf_show_cpu"] : YES;
-    BOOL showGpu = [defs objectForKey:@"perf_show_gpu"] ? [defs boolForKey:@"perf_show_gpu"] : YES;
     BOOL showRam = [defs objectForKey:@"perf_show_ram"] ? [defs boolForKey:@"perf_show_ram"] : YES;
     BOOL showTemp = [defs objectForKey:@"perf_show_temp"] ? [defs boolForKey:@"perf_show_temp"] : YES;
     BOOL showFps = [defs boolForKey:@"perf_show_fps"];
-
+    BOOL showGpu = [defs objectForKey:@"perf_show_gpu"] ? [defs boolForKey:@"perf_show_gpu"] : YES;
     NSMutableArray *lines = [NSMutableArray array];
     if (showCpu) [lines addObject:[NSString stringWithFormat:@"CPU: %.1f%%", cpuUsage]];
-    if (showGpu) [lines addObject:[NSString stringWithFormat:@"GPU: %.1f%%", gpuUsage]];
     if (showRam) [lines addObject:[NSString stringWithFormat:@"RAM: %.1f MB", ramMB]];
+    if (showGpu) {
+        double gpu = getGPUUsagePercent();
+        if (gpu >= 0) [lines addObject:[NSString stringWithFormat:@"GPU: %.0f%%", gpu]];
+        else [lines addObject:@"GPU: N/A"];
+    }
     if (showTemp) [lines addObject:[NSString stringWithFormat:@"Temp: %@", thermalStr]];
     if (showFps) [lines addObject:[NSString stringWithFormat:@"FPS: %ld", (long)_currentFps]];
-
-    self.infoLabel.text = (lines.count == 0) ? @"PiP Active" : [lines componentsJoinedByString:@"\n"];
+    self.infoLabel.text = lines.count == 0 ? @"PiP Active" : [lines componentsJoinedByString:@"\n"];
 }
 
 @end
 
-// ===== NATIVE IOS SETTINGS STYLE MENU WITH NON-ROOT FILE MANAGER =====
+// ===== SECRET MENU =====
 @interface PerfFullScreenMenuView : UIView
 @property (nonatomic, copy) void (^onClose)(void);
 @property (nonatomic, copy) void (^onRunTest)(void);
@@ -418,208 +546,116 @@ static UIWindow *tutorialWindow = nil;
 @end
 
 @implementation PerfFullScreenMenuView {
-    UISegmentedControl *_segmentedControl;
+    UIVisualEffectView *_bgGlass;
+    UILabel *_titleLabel;
+    UILabel *_footerLabel;
+    UIButton *_diagTabButton;
+    UIButton *_settingsTabButton;
     UIScrollView *_diagScrollView;
     UIView *_settingsContainerView;
-    UIView *_filesContainerView;
-
-    // PiP Settings Controls
-    UIView *_previewPipView;
-    UILabel *_previewInfoLabel;
-    UILabel *_sizeValueLabel;
-    UISlider *_sizeSlider;
+    UIButton *_testButton;
+    UIButton *_githubButton;
     UILabel *_opacityValueLabel;
     UISlider *_opacitySlider;
+    UILabel *_sizeValueLabel;
+    UISlider *_sizeSlider;
+    UIView *_previewPipView;
+    UILabel *_previewInfoLabel;
+    BOOL _isDiagTab;
+}
 
-    // File Manager Controls
-    NSString *_currentPath;
-    UILabel *_currentPathLabel;
-    UIScrollView *_filesScrollView;
+- (UIColor *)perfTeal { return [UIColor colorWithRed:0.0 green:0.78 blue:0.70 alpha:1.0]; }
+- (BOOL)isDarkMode {
+    NSUserDefaults *defs = [NSUserDefaults standardUserDefaults];
+    if ([defs objectForKey:@"perf_dark_mode"] == nil) return YES;
+    return [defs boolForKey:@"perf_dark_mode"];
 }
 
 - (instancetype)initWithFrame:(CGRect)frame {
     if (self = [super initWithFrame:frame]) {
-        // iOS Settings Grouped Background (Deep rich dark in dark mode)
-        self.backgroundColor = [UIColor colorWithRed:0.07 green:0.07 blue:0.08 alpha:0.96];
-
-        UIBlurEffect *blur = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemMaterialDark];
-        UIVisualEffectView *blurView = [[UIVisualEffectView alloc] initWithEffect:blur];
-        blurView.frame = self.bounds;
-        blurView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-        [self addSubview:blurView];
-
-        UIEdgeInsets safeInsets = UIEdgeInsetsZero;
-        if (@available(iOS 13.0, *)) {
-            for (UIWindowScene *scene in [UIApplication sharedApplication].connectedScenes) {
-                if ([scene isKindOfClass:[UIWindowScene class]]) {
-                    UIWindow *window = scene.windows.firstObject;
-                    if (window) { safeInsets = window.safeAreaInsets; break; }
-                }
-            }
-        }
-        CGFloat topY = safeInsets.top > 0 ? safeInsets.top + 6 : 38;
-        CGFloat navH = 44;
-
-        // --- 1. iOS Standard Navigation Bar ---
-        UIView *navBar = [[UIView alloc] initWithFrame:CGRectMake(0, topY, frame.size.width, navH)];
-        [self addSubview:navBar];
-
-        // Share button on left
-        UIButton *shareButton = [UIButton buttonWithType:UIButtonTypeSystem];
-        shareButton.frame = CGRectMake(16, 6, 36, 32);
-        [shareButton setImage:[UIImage systemImageNamed:@"square.and.arrow.up"] forState:UIControlStateNormal];
-        shareButton.tintColor = [UIColor systemBlueColor];
-        [shareButton addTarget:self action:@selector(shareTapped) forControlEvents:UIControlEventTouchUpInside];
-        [navBar addSubview:shareButton];
-
-        // Center Title
-        UILabel *navTitle = [[UILabel alloc] initWithFrame:CGRectMake(60, 6, frame.size.width - 120, 32)];
-        navTitle.text = @"Secret Menu";
-        navTitle.textColor = [UIColor whiteColor];
-        navTitle.font = [UIFont systemFontOfSize:17 weight:UIFontWeightBold];
-        navTitle.textAlignment = NSTextAlignmentCenter;
-        [navBar addSubview:navTitle];
-
-        // Done button on right (standard iOS Settings)
-        UIButton *doneButton = [UIButton buttonWithType:UIButtonTypeSystem];
-        doneButton.frame = CGRectMake(frame.size.width - 70, 6, 56, 32);
-        [doneButton setTitle:@"Done" forState:UIControlStateNormal];
-        doneButton.titleLabel.font = [UIFont systemFontOfSize:16 weight:UIFontWeightBold];
-        doneButton.tintColor = [UIColor systemBlueColor];
-        [doneButton addTarget:self action:@selector(closeTapped) forControlEvents:UIControlEventTouchUpInside];
-        [navBar addSubview:doneButton];
-
-        // --- 2. iOS Native Segmented Control ---
-        _segmentedControl = [[UISegmentedControl alloc] initWithItems:@[@"Diagnostics", @"PiP Settings", @"Files"]];
-        _segmentedControl.frame = CGRectMake(18, CGRectGetMaxY(navBar.frame) + 8, frame.size.width - 36, 32);
-        _segmentedControl.selectedSegmentIndex = 0;
-        [_segmentedControl addTarget:self action:@selector(segmentChanged:) forControlEvents:UIControlEventValueChanged];
-        [self addSubview:_segmentedControl];
-
-        CGFloat contentY = CGRectGetMaxY(_segmentedControl.frame) + 12;
-        CGFloat footerH = 46;
-        CGFloat bottomY = frame.size.height - (safeInsets.bottom > 0 ? safeInsets.bottom + 6 : 16);
-        CGFloat contentH = (bottomY - footerH) - contentY;
-        CGFloat contentW = frame.size.width - 36;
-
-        // --- TAB 1: DIAGNOSTICS (iOS Inset Grouped) ---
-        [self setupDiagnosticsTabAtY:contentY width:contentW height:contentH];
-
-        // --- TAB 2: PIP SETTINGS (iOS Inset Grouped) ---
-        [self setupSettingsTabAtY:contentY width:contentW height:contentH];
-
-        // --- TAB 3: NON-ROOT FILE MANAGER ---
-        [self setupFilesTabAtY:contentY width:contentW height:contentH];
-
-        // --- Footer with GitHub button ---
-        UIView *footer = [[UIView alloc] initWithFrame:CGRectMake(18, bottomY - footerH + 4, contentW, footerH)];
-        [self addSubview:footer];
-
-        UILabel *credit = [[UILabel alloc] initWithFrame:CGRectMake(0, 0, contentW - 95, footerH)];
-        credit.text = @"Created by Eksemekse-dev with AI • v3.0";
-        credit.textColor = [UIColor secondaryLabelColor];
-        credit.font = [UIFont systemFontOfSize:12 weight:UIFontWeightMedium];
-        [footer addSubview:credit];
-
-        UIButton *githubBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-        githubBtn.frame = CGRectMake(contentW - 90, 8, 90, 32);
-        [githubBtn setImage:[UIImage systemImageNamed:@"globe"] forState:UIControlStateNormal];
-        [githubBtn setTitle:@" GitHub" forState:UIControlStateNormal];
-        githubBtn.titleLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightBold];
-        githubBtn.tintColor = [UIColor systemBlueColor];
-        githubBtn.backgroundColor = [[UIColor systemBlueColor] colorWithAlphaComponent:0.15];
-        githubBtn.layer.cornerRadius = 16;
-        [githubBtn addTarget:self action:@selector(openGithubTapped) forControlEvents:UIControlEventTouchUpInside];
-        [footer addSubview:githubBtn];
+        _isDiagTab = YES;
+        [self buildUI:frame];
+        [self refreshTheme];
     }
     return self;
 }
 
-- (void)segmentChanged:(UISegmentedControl *)sender {
-    _diagScrollView.hidden = (sender.selectedSegmentIndex != 0);
-    _settingsContainerView.hidden = (sender.selectedSegmentIndex != 1);
-    _filesContainerView.hidden = (sender.selectedSegmentIndex != 2);
-    if (sender.selectedSegmentIndex == 1) [self updateLivePreview];
-    if (sender.selectedSegmentIndex == 2) [self reloadFilesList];
-}
+- (void)buildUI:(CGRect)frame {
+    BOOL dark = [self isDarkMode];
+    _bgGlass = [[UIVisualEffectView alloc] initWithEffect:PerfGlassEffect(dark)];
+    _bgGlass.frame = self.bounds;
+    _bgGlass.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    [self addSubview:_bgGlass];
 
-// Helper: creates iOS Settings-style Grouped Section Container
-- (UIView *)createSettingsGroupWithHeader:(NSString *)header width:(CGFloat)w rows:(NSArray<UIView *> *)rows {
-    CGFloat rowH = 46.0;
-    CGFloat groupH = rows.count * rowH;
-
-    UIView *wrapper = [[UIView alloc] initWithFrame:CGRectMake(0, 0, w, 22 + groupH)];
-    UILabel *headerLbl = [[UILabel alloc] initWithFrame:CGRectMake(12, 0, w - 24, 18)];
-    headerLbl.text = header.uppercaseString;
-    headerLbl.textColor = [UIColor secondaryLabelColor];
-    headerLbl.font = [UIFont systemFontOfSize:12 weight:UIFontWeightBold];
-    [wrapper addSubview:headerLbl];
-
-    UIView *card = [[UIView alloc] initWithFrame:CGRectMake(0, 22, w, groupH)];
-    card.backgroundColor = [UIColor colorWithRed:0.16 green:0.16 blue:0.18 alpha:0.85];
-    card.layer.cornerRadius = 14;
-    card.layer.borderWidth = 0.5;
-    card.layer.borderColor = [[UIColor whiteColor] colorWithAlphaComponent:0.12].CGColor;
-    card.clipsToBounds = YES;
-    [wrapper addSubview:card];
-
-    for (int i = 0; i < rows.count; i++) {
-        UIView *r = rows[i];
-        r.frame = CGRectMake(0, i * rowH, w, rowH);
-        [card addSubview:r];
-        if (i < rows.count - 1) {
-            UIView *sep = [[UIView alloc] initWithFrame:CGRectMake(48, (i + 1) * rowH - 0.5, w - 48, 0.5)];
-            sep.backgroundColor = [[UIColor whiteColor] colorWithAlphaComponent:0.1];
-            [card addSubview:sep];
+    UIEdgeInsets safe = UIEdgeInsetsZero;
+    if (@available(iOS 13.0, *)) {
+        for (UIWindowScene *s in [UIApplication sharedApplication].connectedScenes) {
+            if ([s isKindOfClass:[UIWindowScene class]]) {
+                UIWindow *w = s.windows.firstObject;
+                if (w) { safe = w.safeAreaInsets; break; }
+            }
         }
     }
-    return wrapper;
-}
+    CGFloat topY = safe.top > 0 ? safe.top + 10 : 40;
+    CGFloat bottomY = frame.size.height - (safe.bottom > 0 ? safe.bottom + 15 : 25);
+    CGFloat L = 24, R = 24;
+    CGFloat contentW = frame.size.width - L - R;
 
-// Helper: creates a single row with iOS Settings colored square icon
-- (UIView *)createSettingRowWithIcon:(NSString *)iconName color:(UIColor *)color title:(NSString *)title value:(NSString *)val width:(CGFloat)w {
-    UIView *row = [[UIView alloc] initWithFrame:CGRectMake(0, 0, w, 46)];
-    row.userInteractionEnabled = YES;
+    _titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(L, topY, contentW - 130, 42)];
+    _titleLabel.text = @"Secret Menu";
+    _titleLabel.font = [UIFont systemFontOfSize:32 weight:UIFontWeightHeavy];
+    _titleLabel.adjustsFontSizeToFitWidth = YES;
+    _titleLabel.minimumScaleFactor = 0.7;
+    [self addSubview:_titleLabel];
 
-    // Left Icon Badge (like Settings.app)
-    UIView *badge = [[UIView alloc] initWithFrame:CGRectMake(12, 8, 28, 28)];
-    badge.backgroundColor = color;
-    badge.layer.cornerRadius = 6.5;
-    badge.layer.masksToBounds = YES;
-    [row addSubview:badge];
+    UIButton *closeButton = [UIButton buttonWithType:UIButtonTypeCustom];
+    closeButton.frame = CGRectMake(frame.size.width - R - 50, topY + 2, 50, 50);
+    closeButton.backgroundColor = [self perfTeal];
+    closeButton.layer.cornerRadius = 25;
+    closeButton.layer.borderWidth = 0.8;
+    closeButton.layer.borderColor = [[UIColor whiteColor] colorWithAlphaComponent:0.4].CGColor;
+    [closeButton setTitle:@"✕" forState:UIControlStateNormal];
+    [closeButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    closeButton.titleLabel.font = [UIFont systemFontOfSize:22 weight:UIFontWeightBold];
+    [closeButton addTarget:self action:@selector(closeTapped) forControlEvents:UIControlEventTouchUpInside];
+    [self addSubview:closeButton];
 
-    UIImageView *iv = [[UIImageView alloc] initWithFrame:CGRectMake(4, 4, 20, 20)];
-    iv.image = [UIImage systemImageNamed:iconName];
-    iv.tintColor = [UIColor whiteColor];
-    iv.contentMode = UIViewContentModeScaleAspectFit;
-    [badge addSubview:iv];
+    UIButton *shareButton = [UIButton buttonWithType:UIButtonTypeCustom];
+    shareButton.frame = CGRectMake(frame.size.width - R - 50 - 8 - 50, topY + 2, 50, 50);
+    shareButton.backgroundColor = [self perfTeal];
+    shareButton.layer.cornerRadius = 25;
+    shareButton.layer.borderWidth = 0.8;
+    shareButton.layer.borderColor = [[UIColor whiteColor] colorWithAlphaComponent:0.4].CGColor;
+    [shareButton setTitle:@"⬆" forState:UIControlStateNormal];
+    [shareButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    shareButton.titleLabel.font = [UIFont systemFontOfSize:22 weight:UIFontWeightBold];
+    [shareButton addTarget:self action:@selector(shareTapped) forControlEvents:UIControlEventTouchUpInside];
+    [self addSubview:shareButton];
 
-    UILabel *t = [[UILabel alloc] initWithFrame:CGRectMake(48, 0, w * 0.45, 46)];
-    t.text = title;
-    t.textColor = [UIColor whiteColor];
-    t.font = [UIFont systemFontOfSize:15 weight:UIFontWeightMedium];
-    [row addSubview:t];
+    CGFloat tabY = topY + 66;
+    CGFloat tabW = (contentW - 12) / 2.0;
+    _diagTabButton = [UIButton buttonWithType:UIButtonTypeCustom];
+    _diagTabButton.frame = CGRectMake(L, tabY, tabW, 50);
+    _diagTabButton.layer.cornerRadius = 25;
+    _diagTabButton.layer.borderWidth = 0.6;
+    _diagTabButton.layer.borderColor = [[UIColor whiteColor] colorWithAlphaComponent:0.3].CGColor;
+    [_diagTabButton setTitle:@"Diagnostics" forState:UIControlStateNormal];
+    _diagTabButton.titleLabel.font = [UIFont systemFontOfSize:17 weight:UIFontWeightSemibold];
+    [_diagTabButton addTarget:self action:@selector(diagTabTapped) forControlEvents:UIControlEventTouchUpInside];
+    [self addSubview:_diagTabButton];
 
-    UILabel *v = [[UILabel alloc] initWithFrame:CGRectMake(48 + w * 0.45, 0, w - (48 + w * 0.45) - 14, 46)];
-    v.text = val;
-    v.textColor = [UIColor secondaryLabelColor];
-    v.font = [UIFont systemFontOfSize:14 weight:UIFontWeightRegular];
-    v.textAlignment = NSTextAlignmentRight;
-    v.adjustsFontSizeToFitWidth = YES;
-    v.minimumScaleFactor = 0.65;
-    v.tag = 999;
-    [row addSubview:v];
+    _settingsTabButton = [UIButton buttonWithType:UIButtonTypeCustom];
+    _settingsTabButton.frame = CGRectMake(L + tabW + 12, tabY, tabW, 50);
+    _settingsTabButton.layer.cornerRadius = 25;
+    _settingsTabButton.layer.borderWidth = 0.6;
+    _settingsTabButton.layer.borderColor = [[UIColor whiteColor] colorWithAlphaComponent:0.3].CGColor;
+    [_settingsTabButton setTitle:@"PiP Settings" forState:UIControlStateNormal];
+    _settingsTabButton.titleLabel.font = [UIFont systemFontOfSize:17 weight:UIFontWeightSemibold];
+    [_settingsTabButton addTarget:self action:@selector(settingsTabTapped) forControlEvents:UIControlEventTouchUpInside];
+    [self addSubview:_settingsTabButton];
 
-    UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(rowTapped:)];
-    [row addGestureRecognizer:tap];
-    return row;
-}
-
-// --- SETUP DIAGNOSTICS TAB ---
-- (void)setupDiagnosticsTabAtY:(CGFloat)y width:(CGFloat)w height:(CGFloat)h {
-    _diagScrollView = [[UIScrollView alloc] initWithFrame:CGRectMake(18, y, w, h)];
-    _diagScrollView.showsVerticalScrollIndicator = NO;
-    [self addSubview:_diagScrollView];
+    CGFloat contentY = tabY + 60;
+    CGFloat contentH = (bottomY - 120) - contentY;
 
     size_t modelSize;
     sysctlbyname("hw.machine", NULL, &modelSize, NULL, 0);
@@ -632,7 +668,9 @@ static UIWindow *tutorialWindow = nil;
     struct kinfo_proc kinfo;
     size_t ksize = sizeof(kinfo);
     BOOL debuggerAttached = NO;
-    if (sysctl(mib, 4, &kinfo, &ksize, NULL, 0) == 0) debuggerAttached = ((kinfo.kp_proc.p_flag & P_TRACED) != 0);
+    if (sysctl(mib, 4, &kinfo, &ksize, NULL, 0) == 0) {
+        debuggerAttached = ((kinfo.kp_proc.p_flag & P_TRACED) != 0);
+    }
 
     struct task_basic_info taskInfo;
     mach_msg_type_number_t tSize = TASK_BASIC_INFO_COUNT;
@@ -641,70 +679,125 @@ static UIWindow *tutorialWindow = nil;
     unsigned long long totalDeviceRam = [[NSProcessInfo processInfo] physicalMemory] / (1024 * 1024);
     NSString *bundleId = [[NSBundle mainBundle] bundleIdentifier] ?: @"Unknown";
     NSString *iosVersion = [[UIDevice currentDevice] systemVersion];
-    float gpuVal = getGPUUsagePercentage();
 
     BOOL jitEnabled = debuggerAttached;
     typedef int (*csops_t)(pid_t, unsigned int, void*, size_t);
     csops_t csops_ptr = (csops_t)dlsym(RTLD_DEFAULT, "csops");
     if (csops_ptr) {
         uint32_t csFlags = 0;
-        if (csops_ptr(getpid(), 0, &csFlags, sizeof(csFlags)) == 0) jitEnabled = ((csFlags & 0x10000000) != 0);
+        if (csops_ptr(getpid(), 0, &csFlags, sizeof(csFlags)) == 0) {
+            jitEnabled = ((csFlags & 0x10000000) != 0);
+        }
     }
 
+    double gpuVal = getGPUUsagePercent();
+    NSString *gpuStr = (gpuVal >= 0) ? [NSString stringWithFormat:@"%.0f%%", gpuVal] : @"N/A";
+
     self.shareSummaryText = [NSString stringWithFormat:
-        @"📊 PerfMonitor Diagnostics\n------------------------\nDevice: %@\niOS: %@\nBundle: %@\nDebugger: %@\nJIT: %@\nApp RAM: %.1f MB\nTotal RAM: %llu MB\nGPU: %.1f%%",
-        deviceModel, iosVersion, bundleId, debuggerAttached ? @"Yes" : @"No", jitEnabled ? @"Active" : @"Disabled", appRamMB, totalDeviceRam, gpuVal];
+        @"📊 PerfMonitor Diagnostics\n------------------------\nDevice Model: %@\niOS Version: %@\nBundle ID: %@\nDebugger Attached: %@\nJIT: %@\nMemory+ Kernel: Active\nApp RAM Usage: %.1f MB\nTotal Device RAM: %llu MB\nGPU: %@",
+        deviceModel, iosVersion, bundleId,
+        debuggerAttached ? @"Yes" : @"No",
+        jitEnabled ? @"Enabled" : @"Disabled",
+        appRamMB, totalDeviceRam, gpuStr];
 
-    CGFloat cY = 0;
+    _diagScrollView = [[UIScrollView alloc] initWithFrame:CGRectMake(L, contentY, contentW, contentH)];
+    _diagScrollView.showsVerticalScrollIndicator = NO;
+    [self addSubview:_diagScrollView];
 
-    // Group 1: Device Information
-    NSArray *g1 = @[
-        [self createSettingRowWithIcon:@"iphone" color:[UIColor systemBlueColor] title:@"Device Model" value:deviceModel width:w],
-        [self createSettingRowWithIcon:@"gearshape.fill" color:[UIColor systemGrayColor] title:@"iOS Version" value:iosVersion width:w],
-        [self createSettingRowWithIcon:@"app.badge.fill" color:[UIColor systemOrangeColor] title:@"Bundle ID" value:bundleId width:w],
-        [self createSettingRowWithIcon:@"bolt.fill" color:[UIColor systemIndigoColor] title:@"JIT Compilation" value:jitEnabled ? @"Enabled" : @"Disabled" width:w]
+    NSArray *items = @[
+        @{@"title": @"Device Model",     @"value": deviceModel},
+        @{@"title": @"iOS Version",      @"value": iosVersion},
+        @{@"title": @"Bundle ID",        @"value": bundleId},
+        @{@"title": @"Memory+ Kernel",   @"value": @"Active"},
+        @{@"title": @"App RAM Usage",    @"value": [NSString stringWithFormat:@"%.1f MB", appRamMB]},
+        @{@"title": @"Total Device RAM", @"value": [NSString stringWithFormat:@"%llu MB", totalDeviceRam]},
+        @{@"title": @"JIT",              @"value": jitEnabled ? @"Enabled" : @"Disabled"},
+        @{@"title": @"GPU Usage",        @"value": gpuStr}
     ];
-    UIView *sec1 = [self createSettingsGroupWithHeader:@"Device & Runtime" width:w rows:g1];
-    sec1.frame = CGRectMake(0, cY, w, sec1.frame.size.height);
-    [_diagScrollView addSubview:sec1];
-    cY += sec1.frame.size.height + 16;
 
-    // Group 2: Performance Vitals (CPU, GPU, RAM)
-    NSArray *g2 = @[
-        [self createSettingRowWithIcon:@"cpu" color:[UIColor systemTealColor] title:@"Memory+ Kernel" value:@"Active" width:w],
-        [self createSettingRowWithIcon:@"speedometer" color:[UIColor systemYellowColor] title:@"GPU Utilization" value:[NSString stringWithFormat:@"%.1f%%", gpuVal] width:w],
-        [self createSettingRowWithIcon:@"memorychip" color:[UIColor systemPurpleColor] title:@"App RAM Usage" value:[NSString stringWithFormat:@"%.1f MB", appRamMB] width:w],
-        [self createSettingRowWithIcon:@"internaldrive" color:[UIColor systemGreenColor] title:@"Total Physical RAM" value:[NSString stringWithFormat:@"%llu MB", totalDeviceRam] width:w]
-    ];
-    UIView *sec2 = [self createSettingsGroupWithHeader:@"Performance & Memory" width:w rows:g2];
-    sec2.frame = CGRectMake(0, cY, w, sec2.frame.size.height);
-    [_diagScrollView addSubview:sec2];
-    cY += sec2.frame.size.height + 16;
+    CGFloat rowH = 49, rowGap = 9, yOff = 0;
+    for (NSDictionary *item in items) {
+        UIView *row = [self makeRowTitle:item[@"title"] value:item[@"value"] width:contentW height:rowH];
+        row.frame = CGRectMake(0, yOff, contentW, rowH);
+        UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(rowTapped:)];
+        [row addGestureRecognizer:tap];
+        [_diagScrollView addSubview:row];
+        yOff += rowH + rowGap;
+    }
+    _diagScrollView.contentSize = CGSizeMake(contentW, yOff);
 
-    // Stress test action button (iOS Destructive Style)
-    UIButton *testBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    testBtn.frame = CGRectMake(0, cY, w, 48);
-    testBtn.backgroundColor = [UIColor colorWithRed:0.95 green:0.20 blue:0.20 alpha:0.9];
-    testBtn.layer.cornerRadius = 14;
-    [testBtn setTitle:@"Run RAM Stress Test (OOM)" forState:UIControlStateNormal];
-    [testBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    testBtn.titleLabel.font = [UIFont systemFontOfSize:15 weight:UIFontWeightBold];
-    [testBtn addTarget:self action:@selector(runStressTestTapped) forControlEvents:UIControlEventTouchUpInside];
-    [_diagScrollView addSubview:testBtn];
-    cY += 58;
-
-    _diagScrollView.contentSize = CGSizeMake(w, cY);
-}
-
-// --- SETUP PIP SETTINGS TAB ---
-- (void)setupSettingsTabAtY:(CGFloat)y width:(CGFloat)w height:(CGFloat)h {
-    _settingsContainerView = [[UIView alloc] initWithFrame:CGRectMake(18, y, w, h)];
+    _settingsContainerView = [[UIView alloc] initWithFrame:CGRectMake(L, contentY, contentW, contentH)];
     _settingsContainerView.hidden = YES;
     [self addSubview:_settingsContainerView];
+    [self buildSettingsInContainer:_settingsContainerView width:contentW height:contentH];
 
-    UIScrollView *scroll = [[UIScrollView alloc] initWithFrame:_settingsContainerView.bounds];
+    _testButton = [UIButton buttonWithType:UIButtonTypeCustom];
+    _testButton.frame = CGRectMake(L, bottomY - 118, contentW, 55);
+    _testButton.backgroundColor = [UIColor colorWithRed:1.0 green:0.0 blue:0.02 alpha:1.0];
+    _testButton.layer.cornerRadius = 27.5;
+    _testButton.layer.borderWidth = 0.6;
+    _testButton.layer.borderColor = [UIColor colorWithRed:1.0 green:0.35 blue:0.35 alpha:1.0].CGColor;
+    [_testButton setTitle:@"Run RAM Stress Test (OOM)" forState:UIControlStateNormal];
+    [_testButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    _testButton.titleLabel.font = [UIFont systemFontOfSize:17 weight:UIFontWeightSemibold];
+    [_testButton addTarget:self action:@selector(runStressTestTapped) forControlEvents:UIControlEventTouchUpInside];
+    [self addSubview:_testButton];
+
+    _githubButton = [UIButton buttonWithType:UIButtonTypeCustom];
+    _githubButton.frame = CGRectMake(frame.size.width - R - 98, bottomY - 52, 98, 50);
+    _githubButton.backgroundColor = [self perfTeal];
+    _githubButton.layer.cornerRadius = 25;
+    _githubButton.layer.borderWidth = 0.8;
+    _githubButton.layer.borderColor = [[UIColor whiteColor] colorWithAlphaComponent:0.4].CGColor;
+    [_githubButton setTitle:@"GitHub" forState:UIControlStateNormal];
+    [_githubButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    _githubButton.titleLabel.font = [UIFont systemFontOfSize:17 weight:UIFontWeightSemibold];
+    [_githubButton addTarget:self action:@selector(openGithubTapped) forControlEvents:UIControlEventTouchUpInside];
+    [self addSubview:_githubButton];
+
+    _footerLabel = [[UILabel alloc] initWithFrame:CGRectMake(L, bottomY - 52, contentW - 108, 50)];
+    _footerLabel.text = @"Created by Eksemekse-dev with AI, Version 3.0";
+    _footerLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightHeavy];
+    _footerLabel.numberOfLines = 2;
+    [self addSubview:_footerLabel];
+}
+
+- (UIView *)makeRowTitle:(NSString *)title value:(NSString *)value width:(CGFloat)width height:(CGFloat)height {
+    BOOL dark = [self isDarkMode];
+    UIVisualEffectView *row = PerfGlassPanel(CGRectMake(0, 0, width, height), 23, dark);
+    row.userInteractionEnabled = YES;
+    UIColor *textColor = dark ? [UIColor whiteColor] : [UIColor blackColor];
+    UIColor *secondary = dark ? [[UIColor whiteColor] colorWithAlphaComponent:0.75] : [[UIColor blackColor] colorWithAlphaComponent:0.7];
+
+    UILabel *titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(16, 0, width * 0.52, height)];
+    titleLabel.text = title;
+    titleLabel.textColor = textColor;
+    titleLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightHeavy];
+    titleLabel.tag = 2001;
+    titleLabel.userInteractionEnabled = NO;
+    [row.contentView addSubview:titleLabel];
+
+    UILabel *valueLabel = [[UILabel alloc] initWithFrame:CGRectMake(width * 0.52, 0, width * 0.48 - 16, height)];
+    valueLabel.text = value;
+    valueLabel.textColor = secondary;
+    valueLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
+    valueLabel.textAlignment = NSTextAlignmentRight;
+    valueLabel.adjustsFontSizeToFitWidth = YES;
+    valueLabel.minimumScaleFactor = 0.6;
+    valueLabel.lineBreakMode = NSLineBreakByTruncatingMiddle;
+    valueLabel.tag = 999;
+    valueLabel.userInteractionEnabled = NO;
+    [row.contentView addSubview:valueLabel];
+
+    return row;
+}
+
+- (void)buildSettingsInContainer:(UIView *)container width:(CGFloat)width height:(CGFloat)height {
+    BOOL dark = [self isDarkMode];
+    UIColor *textColor = dark ? [UIColor whiteColor] : [UIColor blackColor];
+    UIScrollView *scroll = [[UIScrollView alloc] initWithFrame:CGRectMake(0, 0, width, height)];
     scroll.showsVerticalScrollIndicator = NO;
-    [_settingsContainerView addSubview:scroll];
+    [container addSubview:scroll];
 
     NSUserDefaults *defs = [NSUserDefaults standardUserDefaults];
     float curOpacity = [defs floatForKey:@"perf_pip_opacity"];
@@ -715,406 +808,230 @@ static UIWindow *tutorialWindow = nil;
 
     CGFloat sY = 0;
 
-    // 0. Live Preview Box (iOS grouped card)
-    UILabel *prevHdr = [[UILabel alloc] initWithFrame:CGRectMake(12, sY, w - 24, 18)];
-    prevHdr.text = @"LIVE PIP PREVIEW";
-    prevHdr.textColor = [UIColor secondaryLabelColor];
-    prevHdr.font = [UIFont systemFontOfSize:12 weight:UIFontWeightBold];
-    [scroll addSubview:prevHdr];
-    sY += 22;
+    UIVisualEffectView *previewBox = PerfGlassPanel(CGRectMake(0, sY, width, 110), 23, dark);
+    [scroll addSubview:previewBox];
 
-    UIView *previewCard = [[UIView alloc] initWithFrame:CGRectMake(0, sY, w, 110)];
-    previewCard.backgroundColor = [UIColor colorWithRed:0.16 green:0.16 blue:0.18 alpha:0.85];
-    previewCard.layer.cornerRadius = 14;
-    previewCard.layer.borderWidth = 0.5;
-    previewCard.layer.borderColor = [[UIColor whiteColor] colorWithAlphaComponent:0.12].CGColor;
-    previewCard.clipsToBounds = YES;
-    [scroll addSubview:previewCard];
+    UILabel *previewTitle = [[UILabel alloc] initWithFrame:CGRectMake(16, 8, width - 32, 16)];
+    previewTitle.text = @"LIVE PIP PREVIEW";
+    previewTitle.textColor = [self perfTeal];
+    previewTitle.font = [UIFont systemFontOfSize:11 weight:UIFontWeightHeavy];
+    [previewBox.contentView addSubview:previewTitle];
 
-    _previewPipView = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 142, 62)];
-    _previewPipView.center = CGPointMake(w / 2.0, 55);
+    _previewPipView = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 142, 70)];
+    _previewPipView.center = CGPointMake(width / 2.0, 72);
     _previewPipView.layer.cornerRadius = 12;
     _previewPipView.layer.masksToBounds = YES;
     _previewPipView.layer.borderWidth = 1.0;
     _previewPipView.layer.borderColor = [[UIColor whiteColor] colorWithAlphaComponent:0.3].CGColor;
     _previewPipView.backgroundColor = getPerfColorForIndex(curColorIdx, curOpacity);
     _previewPipView.transform = CGAffineTransformMakeScale(curScale, curScale);
-    [previewCard addSubview:_previewPipView];
+    [previewBox.contentView addSubview:_previewPipView];
 
     _previewInfoLabel = [[UILabel alloc] initWithFrame:_previewPipView.bounds];
     _previewInfoLabel.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     _previewInfoLabel.textColor = [UIColor whiteColor];
-    _previewInfoLabel.font = [UIFont systemFontOfSize:9.5 weight:UIFontWeightSemibold];
+    _previewInfoLabel.font = [UIFont systemFontOfSize:10 weight:UIFontWeightSemibold];
     _previewInfoLabel.numberOfLines = 0;
     _previewInfoLabel.textAlignment = NSTextAlignmentCenter;
-    _previewInfoLabel.text = @"CPU: 14.8%\nGPU: 28.5%\nRAM: 52.4 MB\nTemp: Normal";
+    _previewInfoLabel.text = @"CPU: 14.8%\nRAM: 52.4 MB\nGPU: 32%\nTemp: Normal";
     [_previewPipView addSubview:_previewInfoLabel];
-    sY += 122;
 
-    // 1. Group: Dimensions & Opacity
-    UILabel *dimHdr = [[UILabel alloc] initWithFrame:CGRectMake(12, sY, w - 24, 18)];
-    dimHdr.text = @"PIP DIMENSIONS & OPACITY";
-    dimHdr.textColor = [UIColor secondaryLabelColor];
-    dimHdr.font = [UIFont systemFontOfSize:12 weight:UIFontWeightBold];
-    [scroll addSubview:dimHdr];
-    sY += 22;
+    sY += 118;
 
-    UIView *dimCard = [[UIView alloc] initWithFrame:CGRectMake(0, sY, w, 134)];
-    dimCard.backgroundColor = [UIColor colorWithRed:0.16 green:0.16 blue:0.18 alpha:0.85];
-    dimCard.layer.cornerRadius = 14;
-    dimCard.layer.borderWidth = 0.5;
-    dimCard.layer.borderColor = [[UIColor whiteColor] colorWithAlphaComponent:0.12].CGColor;
-    [scroll addSubview:dimCard];
+    UILabel *szTitle = [[UILabel alloc] initWithFrame:CGRectMake(4, sY, width - 80, 20)];
+    szTitle.text = @"PiP Size";
+    szTitle.textColor = textColor;
+    szTitle.font = [UIFont systemFontOfSize:14 weight:UIFontWeightHeavy];
+    szTitle.tag = 3001;
+    [scroll addSubview:szTitle];
 
-    // Size Slider
-    UILabel *szLbl = [[UILabel alloc] initWithFrame:CGRectMake(14, 10, w * 0.5, 20)];
-    szLbl.text = @"Scale Size";
-    szLbl.textColor = [UIColor whiteColor];
-    szLbl.font = [UIFont systemFontOfSize:15 weight:UIFontWeightMedium];
-    [dimCard addSubview:szLbl];
-
-    _sizeValueLabel = [[UILabel alloc] initWithFrame:CGRectMake(w - 74, 10, 60, 20)];
+    _sizeValueLabel = [[UILabel alloc] initWithFrame:CGRectMake(width - 70, sY, 66, 20)];
     _sizeValueLabel.text = [NSString stringWithFormat:@"%d%%", (int)(curScale * 100)];
-    _sizeValueLabel.textColor = [UIColor systemBlueColor];
-    _sizeValueLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightBold];
+    _sizeValueLabel.textColor = [self perfTeal];
+    _sizeValueLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightHeavy];
     _sizeValueLabel.textAlignment = NSTextAlignmentRight;
-    [dimCard addSubview:_sizeValueLabel];
+    _sizeValueLabel.tag = 3002;
+    [scroll addSubview:_sizeValueLabel];
+    sY += 26;
 
-    _sizeSlider = [[UISlider alloc] initWithFrame:CGRectMake(14, 34, w - 28, 28)];
+    _sizeSlider = [[UISlider alloc] initWithFrame:CGRectMake(4, sY, width - 8, 30)];
     _sizeSlider.minimumValue = 0.65f;
     _sizeSlider.maximumValue = 1.35f;
     _sizeSlider.value = curScale;
+    _sizeSlider.tintColor = [self perfTeal];
     [_sizeSlider addTarget:self action:@selector(sizeSliderChanged:) forControlEvents:UIControlEventValueChanged];
-    [dimCard addSubview:_sizeSlider];
+    [scroll addSubview:_sizeSlider];
+    sY += 44;
 
-    // Opacity Slider
-    UILabel *opLbl = [[UILabel alloc] initWithFrame:CGRectMake(14, 72, w * 0.5, 20)];
-    opLbl.text = @"Overlay Opacity";
-    opLbl.textColor = [UIColor whiteColor];
-    opLbl.font = [UIFont systemFontOfSize:15 weight:UIFontWeightMedium];
-    [dimCard addSubview:opLbl];
+    UILabel *opTitle = [[UILabel alloc] initWithFrame:CGRectMake(4, sY, width - 80, 20)];
+    opTitle.text = @"PiP Opacity";
+    opTitle.textColor = textColor;
+    opTitle.font = [UIFont systemFontOfSize:14 weight:UIFontWeightHeavy];
+    opTitle.tag = 3001;
+    [scroll addSubview:opTitle];
 
-    _opacityValueLabel = [[UILabel alloc] initWithFrame:CGRectMake(w - 74, 72, 60, 20)];
+    _opacityValueLabel = [[UILabel alloc] initWithFrame:CGRectMake(width - 70, sY, 66, 20)];
     _opacityValueLabel.text = [NSString stringWithFormat:@"%d%%", (int)(curOpacity * 100)];
-    _opacityValueLabel.textColor = [UIColor systemBlueColor];
-    _opacityValueLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightBold];
+    _opacityValueLabel.textColor = [self perfTeal];
+    _opacityValueLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightHeavy];
     _opacityValueLabel.textAlignment = NSTextAlignmentRight;
-    [dimCard addSubview:_opacityValueLabel];
+    _opacityValueLabel.tag = 3002;
+    [scroll addSubview:_opacityValueLabel];
+    sY += 26;
 
-    _opacitySlider = [[UISlider alloc] initWithFrame:CGRectMake(14, 96, w - 28, 28)];
+    _opacitySlider = [[UISlider alloc] initWithFrame:CGRectMake(4, sY, width - 8, 30)];
     _opacitySlider.minimumValue = 0.2f;
     _opacitySlider.maximumValue = 1.0f;
     _opacitySlider.value = curOpacity;
+    _opacitySlider.tintColor = [self perfTeal];
     [_opacitySlider addTarget:self action:@selector(opacitySliderChanged:) forControlEvents:UIControlEventValueChanged];
-    [dimCard addSubview:_opacitySlider];
-    sY += 146;
+    [scroll addSubview:_opacitySlider];
+    sY += 44;
 
-    // 2. Color Themes Palette
-    UILabel *colHdr = [[UILabel alloc] initWithFrame:CGRectMake(12, sY, w - 24, 18)];
-    colHdr.text = @"THEME PALETTE";
-    colHdr.textColor = [UIColor secondaryLabelColor];
-    colHdr.font = [UIFont systemFontOfSize:12 weight:UIFontWeightBold];
-    [scroll addSubview:colHdr];
-    sY += 22;
+    UILabel *colTitle = [[UILabel alloc] initWithFrame:CGRectMake(4, sY, width - 8, 20)];
+    colTitle.text = @"PiP Background Color";
+    colTitle.textColor = textColor;
+    colTitle.font = [UIFont systemFontOfSize:14 weight:UIFontWeightHeavy];
+    colTitle.tag = 3001;
+    [scroll addSubview:colTitle];
+    sY += 26;
 
-    UIView *colCard = [[UIView alloc] initWithFrame:CGRectMake(0, sY, w, 90)];
-    colCard.backgroundColor = [UIColor colorWithRed:0.16 green:0.16 blue:0.18 alpha:0.85];
-    colCard.layer.cornerRadius = 14;
-    colCard.layer.borderWidth = 0.5;
-    colCard.layer.borderColor = [[UIColor whiteColor] colorWithAlphaComponent:0.12].CGColor;
-    [scroll addSubview:colCard];
-
-    NSArray *cNames = @[@"Black", @"Navy", @"Cyan", @"Purple", @"Emerald", @"Crimson"];
-    CGFloat bW = (w - 32) / 3.0;
-    CGFloat bH = 32;
+    NSArray *colorNames = @[@"Black", @"Navy", @"Cyan", @"Purple", @"Emerald", @"Crimson"];
+    CGFloat btnW = (width - 16) / 3.0;
+    CGFloat btnH = 34;
     for (int i = 0; i < 6; i++) {
-        CGFloat bx = 8 + (i % 3) * (bW + 8);
-        CGFloat by = 8 + (i / 3) * (bH + 8);
-        UIButton *cBtn = [UIButton buttonWithType:UIButtonTypeCustom];
-        cBtn.frame = CGRectMake(bx, by, bW, bH);
-        cBtn.backgroundColor = getPerfColorForIndex(i, 0.95);
-        cBtn.layer.cornerRadius = 8;
-        cBtn.layer.borderWidth = (i == curColorIdx) ? 2.5 : 1.0;
-        cBtn.layer.borderColor = (i == curColorIdx) ? [UIColor systemBlueColor].CGColor : [UIColor colorWithWhite:1.0 alpha:0.2].CGColor;
-        [cBtn setTitle:cNames[i] forState:UIControlStateNormal];
-        cBtn.titleLabel.font = [UIFont systemFontOfSize:11 weight:UIFontWeightBold];
-        cBtn.tag = 100 + i;
-        [cBtn addTarget:self action:@selector(colorSelected:) forControlEvents:UIControlEventTouchUpInside];
-        [colCard addSubview:cBtn];
+        CGFloat colX = (i % 3) * (btnW + 8);
+        CGFloat colY = sY + (i / 3) * (btnH + 8);
+        UIButton *colBtn = [UIButton buttonWithType:UIButtonTypeCustom];
+        colBtn.frame = CGRectMake(colX, colY, btnW, btnH);
+        colBtn.backgroundColor = getPerfColorForIndex(i, 0.95);
+        colBtn.layer.cornerRadius = 10;
+        colBtn.layer.borderWidth = (i == curColorIdx) ? 2.5 : 1.0;
+        colBtn.layer.borderColor = (i == curColorIdx) ? [self perfTeal].CGColor : [[UIColor whiteColor] colorWithAlphaComponent:0.25].CGColor;
+        [colBtn setTitle:colorNames[i] forState:UIControlStateNormal];
+        colBtn.titleLabel.font = [UIFont systemFontOfSize:11 weight:UIFontWeightBold];
+        colBtn.tag = 100 + i;
+        [colBtn addTarget:self action:@selector(colorSelected:) forControlEvents:UIControlEventTouchUpInside];
+        [scroll addSubview:colBtn];
     }
-    sY += 102;
+    sY += (btnH + 8) * 2 + 12;
 
-    // 3. Visible Metrics Toggles (CPU, GPU, RAM, Temp, FPS)
-    UILabel *swHdr = [[UILabel alloc] initWithFrame:CGRectMake(12, sY, w - 24, 18)];
-    swHdr.text = @"VISIBLE METRICS IN PIP";
-    swHdr.textColor = [UIColor secondaryLabelColor];
-    swHdr.font = [UIFont systemFontOfSize:12 weight:UIFontWeightBold];
-    [scroll addSubview:swHdr];
-    sY += 22;
+    UILabel *metricsTitle = [[UILabel alloc] initWithFrame:CGRectMake(4, sY, width - 8, 20)];
+    metricsTitle.text = @"Visible Metrics & Theme";
+    metricsTitle.textColor = textColor;
+    metricsTitle.font = [UIFont systemFontOfSize:14 weight:UIFontWeightHeavy];
+    metricsTitle.tag = 3001;
+    [scroll addSubview:metricsTitle];
+    sY += 26;
 
-    NSArray *configs = @[
-        @{@"key": @"perf_show_cpu",  @"title": @"Show CPU Usage",     @"def": @YES},
-        @{@"key": @"perf_show_gpu",  @"title": @"Show GPU Usage",     @"def": @YES},
-        @{@"key": @"perf_show_ram",  @"title": @"Show RAM Usage",     @"def": @YES},
-        @{@"key": @"perf_show_temp", @"title": @"Show Thermal State", @"def": @YES},
-        @{@"key": @"perf_show_fps",  @"title": @"Show Render FPS",    @"def": @NO}
+    NSArray *switchesConfig = @[
+        @{@"key": @"perf_show_cpu",  @"label": @"Show CPU Usage",            @"def": @YES},
+        @{@"key": @"perf_show_ram",  @"label": @"Show RAM Usage",            @"def": @YES},
+        @{@"key": @"perf_show_gpu",  @"label": @"Show GPU Usage",            @"def": @YES},
+        @{@"key": @"perf_show_temp", @"label": @"Show Thermal State",        @"def": @YES},
+        @{@"key": @"perf_show_fps",  @"label": @"Show Render FPS",           @"def": @NO},
+        @{@"key": @"perf_dark_mode", @"label": @"Dark Mode (Liquid Glass)",  @"def": @YES}
     ];
+    for (NSDictionary *cfg in switchesConfig) {
+        UIView *row = [[UIView alloc] initWithFrame:CGRectMake(0, sY, width, 42)];
+        row.backgroundColor = dark ? [UIColor colorWithWhite:1.0 alpha:0.06] : [UIColor colorWithWhite:0.0 alpha:0.04];
+        row.layer.cornerRadius = 12;
+        row.tag = 3000;
 
-    UIView *swCard = [[UIView alloc] initWithFrame:CGRectMake(0, sY, w, configs.count * 46)];
-    swCard.backgroundColor = [UIColor colorWithRed:0.16 green:0.16 blue:0.18 alpha:0.85];
-    swCard.layer.cornerRadius = 14;
-    swCard.layer.borderWidth = 0.5;
-    swCard.layer.borderColor = [[UIColor whiteColor] colorWithAlphaComponent:0.12].CGColor;
-    swCard.clipsToBounds = YES;
-    [scroll addSubview:swCard];
+        UILabel *lbl = [[UILabel alloc] initWithFrame:CGRectMake(14, 11, row.frame.size.width - 70, 20)];
+        lbl.text = cfg[@"label"];
+        lbl.textColor = textColor;
+        lbl.font = [UIFont systemFontOfSize:14 weight:UIFontWeightMedium];
+        lbl.tag = 3003;
+        [row addSubview:lbl];
 
-    for (int i = 0; i < configs.count; i++) {
-        NSDictionary *c = configs[i];
-        UIView *row = [[UIView alloc] initWithFrame:CGRectMake(0, i * 46, w, 46)];
-        [swCard addSubview:row];
-
-        UILabel *t = [[UILabel alloc] initWithFrame:CGRectMake(14, 0, w - 80, 46)];
-        t.text = c[@"title"];
-        t.textColor = [UIColor whiteColor];
-        t.font = [UIFont systemFontOfSize:15 weight:UIFontWeightMedium];
-        [row addSubview:t];
-
-        UISwitch *sw = [[UISwitch alloc] initWithFrame:CGRectMake(w - 62, 7.5, 51, 31)];
-        BOOL val = [defs objectForKey:c[@"key"]] ? [defs boolForKey:c[@"key"]] : [c[@"def"] boolValue];
+        UISwitch *sw = [[UISwitch alloc] initWithFrame:CGRectMake(row.frame.size.width - 62, 6, 50, 30)];
+        BOOL val = [defs objectForKey:cfg[@"key"]] ? [defs boolForKey:cfg[@"key"]] : [cfg[@"def"] boolValue];
         sw.on = val;
-        sw.accessibilityIdentifier = c[@"key"];
+        sw.onTintColor = [self perfTeal];
+        sw.accessibilityIdentifier = cfg[@"key"];
         [sw addTarget:self action:@selector(metricSwitchChanged:) forControlEvents:UIControlEventValueChanged];
         [row addSubview:sw];
 
-        if (i < configs.count - 1) {
-            UIView *sep = [[UIView alloc] initWithFrame:CGRectMake(14, 45.5, w - 14, 0.5)];
-            sep.backgroundColor = [[UIColor whiteColor] colorWithAlphaComponent:0.1];
-            [row addSubview:sep];
-        }
+        [scroll addSubview:row];
+        sY += 48;
     }
-    sY += configs.count * 46 + 20;
-
-    scroll.contentSize = CGSizeMake(w, sY);
+    scroll.contentSize = CGSizeMake(width, sY + 20);
 }
 
-// --- SETUP NON-ROOT FILE MANAGER TAB ---
-- (void)setupFilesTabAtY:(CGFloat)y width:(CGFloat)w height:(CGFloat)h {
-    _filesContainerView = [[UIView alloc] initWithFrame:CGRectMake(18, y, w, h)];
-    _filesContainerView.hidden = YES;
-    [self addSubview:_filesContainerView];
+- (void)refreshTheme {
+    BOOL dark = [self isDarkMode];
+    UIColor *textColor = dark ? [UIColor whiteColor] : [UIColor blackColor];
+    UIColor *secondary = dark ? [[UIColor whiteColor] colorWithAlphaComponent:0.75] : [[UIColor blackColor] colorWithAlphaComponent:0.7];
+    UIColor *rowTint = dark ? [UIColor colorWithWhite:1.0 alpha:0.05] : [UIColor colorWithWhite:1.0 alpha:0.15];
+    UIColor *glassBorder = dark ? [[UIColor whiteColor] colorWithAlphaComponent:0.15] : [[UIColor whiteColor] colorWithAlphaComponent:0.5];
+    UIVisualEffect *effect = PerfGlassEffect(dark);
 
-    _currentPath = NSHomeDirectory();
+    if (_bgGlass) _bgGlass.effect = effect;
+    if (_titleLabel) _titleLabel.textColor = textColor;
+    if (_footerLabel) _footerLabel.textColor = textColor;
 
-    // Shortcuts Bar (Sandbox, Documents, Library, Bundle, Root)
-    UIScrollView *quickBar = [[UIScrollView alloc] initWithFrame:CGRectMake(0, 0, w, 34)];
-    quickBar.showsHorizontalScrollIndicator = NO;
-    [_filesContainerView addSubview:quickBar];
-
-    NSArray *shortcuts = @[
-        @{@"t": @"Sandbox", @"p": NSHomeDirectory()},
-        @{@"t": @"Documents", @"p": [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) firstObject] ?: NSHomeDirectory()},
-        @{@"t": @"Library", @"p": [NSSearchPathForDirectoriesInDomains(NSLibraryDirectory, NSUserDomainMask, YES) firstObject] ?: NSHomeDirectory()},
-        @{@"t": @"Bundle", @"p": [[NSBundle mainBundle] bundlePath]},
-        @{@"t": @"Root /", @"p": @"/"}
-    ];
-
-    CGFloat qx = 0;
-    for (NSDictionary *item in shortcuts) {
-        UIButton *btn = [UIButton buttonWithType:UIButtonTypeSystem];
-        CGFloat bw = [item[@"t"] sizeWithAttributes:@{NSFontAttributeName: [UIFont systemFontOfSize:12 weight:UIFontWeightMedium]}].width + 20;
-        btn.frame = CGRectMake(qx, 0, bw, 32);
-        btn.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.1];
-        btn.layer.cornerRadius = 10;
-        [btn setTitle:item[@"t"] forState:UIControlStateNormal];
-        [btn setTitleColor:[UIColor systemBlueColor] forState:UIControlStateNormal];
-        btn.titleLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightBold];
-        btn.accessibilityIdentifier = item[@"p"];
-        [btn addTarget:self action:@selector(shortcutTapped:) forControlEvents:UIControlEventTouchUpInside];
-        [quickBar addSubview:btn];
-        qx += bw + 8;
-    }
-    quickBar.contentSize = CGSizeMake(qx, 32);
-
-    // Path & Up button Bar
-    UIView *pathCard = [[UIView alloc] initWithFrame:CGRectMake(0, 42, w, 40)];
-    pathCard.backgroundColor = [UIColor colorWithRed:0.16 green:0.16 blue:0.18 alpha:0.85];
-    pathCard.layer.cornerRadius = 10;
-    pathCard.layer.borderWidth = 0.5;
-    pathCard.layer.borderColor = [[UIColor whiteColor] colorWithAlphaComponent:0.12].CGColor;
-    [_filesContainerView addSubview:pathCard];
-
-    _currentPathLabel = [[UILabel alloc] initWithFrame:CGRectMake(10, 0, w - 50, 40)];
-    _currentPathLabel.textColor = [UIColor whiteColor];
-    _currentPathLabel.font = [UIFont fontWithName:@"Menlo" size:11] ?: [UIFont systemFontOfSize:11];
-    _currentPathLabel.lineBreakMode = NSLineBreakByTruncatingMiddle;
-    _currentPathLabel.text = _currentPath;
-    [pathCard addSubview:_currentPathLabel];
-
-    UIButton *upBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    upBtn.frame = CGRectMake(w - 38, 4, 32, 32);
-    [upBtn setImage:[UIImage systemImageNamed:@"arrow.up.circle.fill"] forState:UIControlStateNormal];
-    upBtn.tintColor = [UIColor systemBlueColor];
-    [upBtn addTarget:self action:@selector(goUpDirectory) forControlEvents:UIControlEventTouchUpInside];
-    [pathCard addSubview:upBtn];
-
-    // ScrollView for Files
-    CGFloat listY = 90;
-    _filesScrollView = [[UIScrollView alloc] initWithFrame:CGRectMake(0, listY, w, h - listY)];
-    _filesScrollView.showsVerticalScrollIndicator = YES;
-    [_filesContainerView addSubview:_filesScrollView];
-}
-
-- (void)shortcutTapped:(UIButton *)btn {
-    if (btn.accessibilityIdentifier) {
-        _currentPath = btn.accessibilityIdentifier;
-        [self reloadFilesList];
-    }
-}
-
-- (void)goUpDirectory {
-    if ([_currentPath isEqualToString:@"/"]) return;
-    _currentPath = [_currentPath stringByDeletingLastPathComponent];
-    if (_currentPath.length == 0) _currentPath = @"/";
-    [self reloadFilesList];
-}
-
-- (void)reloadFilesList {
-    for (UIView *v in [_filesScrollView.subviews copy]) [v removeFromSuperview];
-    _currentPathLabel.text = _currentPath;
-
-    NSError *err = nil;
-    NSArray *contents = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:_currentPath error:&err];
-
-    CGFloat w = _filesScrollView.frame.size.width;
-    if (err || !contents || contents.count == 0) {
-        UILabel *empty = [[UILabel alloc] initWithFrame:CGRectMake(20, 40, w - 40, 60)];
-        empty.text = err ? @"Protected / Inaccessible Directory (Sandbox)" : @"Directory is empty";
-        empty.textColor = [UIColor secondaryLabelColor];
-        empty.font = [UIFont systemFontOfSize:14 weight:UIFontWeightMedium];
-        empty.numberOfLines = 2;
-        empty.textAlignment = NSTextAlignmentCenter;
-        [_filesScrollView addSubview:empty];
-        _filesScrollView.contentSize = CGSizeMake(w, 120);
-        return;
-    }
-
-    // Sort: directories first, then files
-    NSMutableArray *dirs = [NSMutableArray array];
-    NSMutableArray *files = [NSMutableArray array];
-    NSFileManager *fm = [NSFileManager defaultManager];
-
-    for (NSString *name in contents) {
-        NSString *full = [_currentPath stringByAppendingPathComponent:name];
-        BOOL isDir = NO;
-        [fm fileExistsAtPath:full isDirectory:&isDir];
-        if (isDir) [dirs addObject:name];
-        else [files addObject:name];
-    }
-    [dirs sortUsingSelector:@selector(localizedCaseInsensitiveCompare:)];
-    [files sortUsingSelector:@selector(localizedCaseInsensitiveCompare:)];
-
-    NSMutableArray *allSorted = [NSMutableArray arrayWithArray:dirs];
-    [allSorted addObjectsFromArray:files];
-
-    CGFloat rowH = 46.0;
-    UIView *card = [[UIView alloc] initWithFrame:CGRectMake(0, 0, w, allSorted.count * rowH)];
-    card.backgroundColor = [UIColor colorWithRed:0.16 green:0.16 blue:0.18 alpha:0.85];
-    card.layer.cornerRadius = 14;
-    card.layer.borderWidth = 0.5;
-    card.layer.borderColor = [[UIColor whiteColor] colorWithAlphaComponent:0.12].CGColor;
-    card.clipsToBounds = YES;
-    [_filesScrollView addSubview:card];
-
-    for (int i = 0; i < allSorted.count; i++) {
-        NSString *name = allSorted[i];
-        NSString *full = [_currentPath stringByAppendingPathComponent:name];
-        BOOL isDir = NO;
-        [fm fileExistsAtPath:full isDirectory:&isDir];
-
-        UIButton *row = [UIButton buttonWithType:UIButtonTypeCustom];
-        row.frame = CGRectMake(0, i * rowH, w, rowH);
-        row.accessibilityIdentifier = full;
-        [row addTarget:self action:@selector(fileRowTapped:) forControlEvents:UIControlEventTouchUpInside];
-        [card addSubview:row];
-
-        UIImageView *icon = [[UIImageView alloc] initWithFrame:CGRectMake(14, 13, 20, 20)];
-        icon.image = [UIImage systemImageNamed:isDir ? @"folder.fill" : @"doc.text.fill"];
-        icon.tintColor = isDir ? [UIColor systemBlueColor] : [UIColor lightGrayColor];
-        icon.contentMode = UIViewContentModeScaleAspectFit;
-        [row addSubview:icon];
-
-        UILabel *nameLbl = [[UILabel alloc] initWithFrame:CGRectMake(42, 4, w - 120, 38)];
-        nameLbl.text = name;
-        nameLbl.textColor = [UIColor whiteColor];
-        nameLbl.font = [UIFont systemFontOfSize:14 weight:UIFontWeightMedium];
-        [row addSubview:nameLbl];
-
-        if (isDir) {
-            UIImageView *chev = [[UIImageView alloc] initWithFrame:CGRectMake(w - 24, 15, 14, 14)];
-            chev.image = [UIImage systemImageNamed:@"chevron.right"];
-            chev.tintColor = [UIColor secondaryLabelColor];
-            chev.contentMode = UIViewContentModeScaleAspectFit;
-            [row addSubview:chev];
-        } else {
-            NSDictionary *attr = [fm attributesOfItemAtPath:full error:nil];
-            unsigned long long fSize = [attr fileSize];
-            NSString *szStr = (fSize < 1024) ? [NSString stringWithFormat:@"%llu B", fSize] : (fSize < 1024 * 1024) ? [NSString stringWithFormat:@"%.1f KB", fSize / 1024.0] : [NSString stringWithFormat:@"%.1f MB", fSize / (1024.0 * 1024.0)];
-            UILabel *sLbl = [[UILabel alloc] initWithFrame:CGRectMake(w - 90, 4, 76, 38)];
-            sLbl.text = szStr;
-            sLbl.textColor = [UIColor secondaryLabelColor];
-            sLbl.font = [UIFont fontWithName:@"Menlo" size:11] ?: [UIFont systemFontOfSize:11];
-            sLbl.textAlignment = NSTextAlignmentRight;
-            [row addSubview:sLbl];
-        }
-
-        if (i < allSorted.count - 1) {
-            UIView *sep = [[UIView alloc] initWithFrame:CGRectMake(42, (i + 1) * rowH - 0.5, w - 42, 0.5)];
-            sep.backgroundColor = [[UIColor whiteColor] colorWithAlphaComponent:0.08];
-            [card addSubview:sep];
-        }
-    }
-    _filesScrollView.contentSize = CGSizeMake(w, allSorted.count * rowH + 20);
-}
-
-- (void)fileRowTapped:(UIButton *)sender {
-    NSString *path = sender.accessibilityIdentifier;
-    if (!path) return;
-    BOOL isDir = NO;
-    if ([[NSFileManager defaultManager] fileExistsAtPath:path isDirectory:&isDir] && isDir) {
-        _currentPath = path;
-        [self reloadFilesList];
+    if (_isDiagTab) {
+        _diagTabButton.backgroundColor = [self perfTeal];
+        [_diagTabButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+        _settingsTabButton.backgroundColor = dark ? [UIColor colorWithWhite:1.0 alpha:0.08] : [UIColor colorWithWhite:0.0 alpha:0.04];
+        [_settingsTabButton setTitleColor:textColor forState:UIControlStateNormal];
     } else {
-        // Quick File Preview Action Sheet / Alert
-        NSDictionary *attrs = [[NSFileManager defaultManager] attributesOfItemAtPath:path error:nil];
-        unsigned long long sz = [attrs fileSize];
-        NSString *previewText = @"";
-
-        // Read up to 800 bytes if readable text
-        NSData *data = [NSData dataWithContentsOfFile:path options:NSDataReadingMappedIfSafe error:nil];
-        if (data && data.length > 0) {
-            NSString *txt = [[NSString alloc] initWithData:[data subdataWithRange:NSMakeRange(0, MIN(data.length, (NSUInteger)800))] encoding:NSUTF8StringEncoding];
-            if (txt) previewText = [NSString stringWithFormat:@"\n\nPreview:\n%@", txt];
-        }
-
-        NSString *msg = [NSString stringWithFormat:@"Path: %@\nSize: %llu bytes%@", path, sz, previewText];
-        UIAlertController *alert = [UIAlertController alertControllerWithTitle:[path lastPathComponent] message:msg preferredStyle:UIAlertControllerStyleAlert];
-        
-        [alert addAction:[UIAlertAction actionWithTitle:@"Copy Path" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
-            [UIPasteboard generalPasteboard].string = path;
-        }]];
-        
-        [alert addAction:[UIAlertAction actionWithTitle:@"Share" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
-            NSURL *fileUrl = [NSURL fileURLWithPath:path];
-            UIActivityViewController *avc = [[UIActivityViewController alloc] initWithActivityItems:@[fileUrl] applicationActivities:nil];
-            UIViewController *root = self.window.rootViewController;
-            if (root) [root presentViewController:avc animated:YES completion:nil];
-        }]];
-
-        [alert addAction:[UIAlertAction actionWithTitle:@"Close" style:UIAlertActionStyleCancel handler:nil]];
-
-        UIViewController *root = self.window.rootViewController;
-        if (root) [root presentViewController:alert animated:YES completion:nil];
+        _settingsTabButton.backgroundColor = [self perfTeal];
+        [_settingsTabButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+        _diagTabButton.backgroundColor = dark ? [UIColor colorWithWhite:1.0 alpha:0.08] : [UIColor colorWithWhite:0.0 alpha:0.04];
+        [_diagTabButton setTitleColor:textColor forState:UIControlStateNormal];
     }
+
+    for (UIView *v in _diagScrollView.subviews) {
+        if ([v isKindOfClass:[UIVisualEffectView class]]) {
+            UIVisualEffectView *p = (UIVisualEffectView *)v;
+            p.effect = effect;
+            p.layer.borderColor = glassBorder.CGColor;
+            p.contentView.backgroundColor = rowTint;
+            for (UIView *sub in p.contentView.subviews) {
+                if ([sub isKindOfClass:[UILabel class]]) {
+                    UILabel *l = (UILabel *)sub;
+                    l.textColor = (l.tag == 999) ? secondary : textColor;
+                }
+            }
+        }
+    }
+
+    [self refreshThemeRecursive:_settingsContainerView effect:effect textColor:textColor secondary:secondary rowTint:rowTint glassBorder:glassBorder];
+}
+
+- (void)refreshThemeRecursive:(UIView *)v effect:(UIVisualEffect *)effect textColor:(UIColor *)textColor secondary:(UIColor *)secondary rowTint:(UIColor *)rowTint glassBorder:(UIColor *)glassBorder {
+    if (v.tag == 3000) {
+        v.backgroundColor = rowTint;
+    } else if (v.tag == 3001 || v.tag == 3003) {
+        ((UILabel *)v).textColor = textColor;
+    } else if ([v isKindOfClass:[UIVisualEffectView class]]) {
+        UIVisualEffectView *p = (UIVisualEffectView *)v;
+        p.effect = effect;
+        p.layer.borderColor = glassBorder.CGColor;
+        p.contentView.backgroundColor = rowTint;
+    }
+    for (UIView *sub in v.subviews) {
+        [self refreshThemeRecursive:sub effect:effect textColor:textColor secondary:secondary rowTint:rowTint glassBorder:glassBorder];
+    }
+}
+
+- (void)diagTabTapped {
+    if (_isDiagTab) return;
+    _isDiagTab = YES;
+    _diagScrollView.hidden = NO;
+    _settingsContainerView.hidden = YES;
+    [self refreshTheme];
+}
+
+- (void)settingsTabTapped {
+    if (!_isDiagTab) return;
+    _isDiagTab = NO;
+    _diagScrollView.hidden = YES;
+    _settingsContainerView.hidden = NO;
+    [self updateLivePreview];
+    [self refreshTheme];
 }
 
 - (void)updateLivePreview {
@@ -1124,7 +1041,6 @@ static UIWindow *tutorialWindow = nil;
     NSInteger curColorIdx = [defs integerForKey:@"perf_pip_color_idx"];
     float curScale = _sizeSlider ? _sizeSlider.value : [defs floatForKey:@"perf_pip_scale"];
     if (curScale < 0.6f || curScale > 1.6f) curScale = 1.0f;
-
     if (_previewPipView) {
         _previewPipView.backgroundColor = getPerfColorForIndex(curColorIdx, curOpacity);
         _previewPipView.transform = CGAffineTransformMakeScale(curScale, curScale);
@@ -1132,26 +1048,29 @@ static UIWindow *tutorialWindow = nil;
 }
 
 - (void)sizeSliderChanged:(UISlider *)sender {
-    float val = sender.value;
-    _sizeValueLabel.text = [NSString stringWithFormat:@"%d%%", (int)(val * 100)];
-    [[NSUserDefaults standardUserDefaults] setFloat:val forKey:@"perf_pip_scale"];
-    [self updateLivePreview];
-    if (sharedMonitorView) dispatch_async(dispatch_get_main_queue(), ^{ [sharedMonitorView applySettings]; });
+    @try {
+        float val = sender.value;
+        _sizeValueLabel.text = [NSString stringWithFormat:@"%d%%", (int)(val * 100)];
+        [[NSUserDefaults standardUserDefaults] setFloat:val forKey:@"perf_pip_scale"];
+        [self updateLivePreview];
+        if (sharedMonitorView) dispatch_async(dispatch_get_main_queue(), ^{ [sharedMonitorView applySettings]; });
+    } @catch (NSException *e) {}
 }
 
 - (void)opacitySliderChanged:(UISlider *)sender {
-    float val = sender.value;
-    _opacityValueLabel.text = [NSString stringWithFormat:@"%d%%", (int)(val * 100)];
-    [[NSUserDefaults standardUserDefaults] setFloat:val forKey:@"perf_pip_opacity"];
-    [self updateLivePreview];
-    if (sharedMonitorView) dispatch_async(dispatch_get_main_queue(), ^{ [sharedMonitorView applySettings]; });
+    @try {
+        float val = sender.value;
+        _opacityValueLabel.text = [NSString stringWithFormat:@"%d%%", (int)(val * 100)];
+        [[NSUserDefaults standardUserDefaults] setFloat:val forKey:@"perf_pip_opacity"];
+        [self updateLivePreview];
+        if (sharedMonitorView) dispatch_async(dispatch_get_main_queue(), ^{ [sharedMonitorView applySettings]; });
+    } @catch (NSException *e) {}
 }
 
 - (void)colorSelected:(UIButton *)sender {
     @try {
         NSInteger idx = sender.tag - 100;
         [[NSUserDefaults standardUserDefaults] setInteger:idx forKey:@"perf_pip_color_idx"];
-
         UIView *parent = sender.superview;
         if (parent) {
             for (UIView *sub in parent.subviews) {
@@ -1159,39 +1078,46 @@ static UIWindow *tutorialWindow = nil;
                     UIButton *btn = (UIButton *)sub;
                     BOOL isCur = (btn.tag == sender.tag);
                     btn.layer.borderWidth = isCur ? 2.5 : 1.0;
-                    btn.layer.borderColor = isCur ? [UIColor systemBlueColor].CGColor : [UIColor colorWithWhite:1.0 alpha:0.2].CGColor;
+                    btn.layer.borderColor = isCur ? [self perfTeal].CGColor : [[UIColor whiteColor] colorWithAlphaComponent:0.25].CGColor;
                 }
             }
         }
         [self updateLivePreview];
-        @try {
-            UIImpactFeedbackGenerator *gen = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleLight];
-            [gen impactOccurred];
-        } @catch (NSException *e) {}
-
+        UIImpactFeedbackGenerator *gen = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleLight];
+        [gen impactOccurred];
         if (sharedMonitorView) dispatch_async(dispatch_get_main_queue(), ^{ [sharedMonitorView applySettings]; });
-    } @catch (NSException *ex) {}
+    } @catch (NSException *ex) { NSLog(@"[PerfMonitor] colorSelected: %@", ex); }
 }
 
 - (void)metricSwitchChanged:(UISwitch *)sender {
-    NSString *key = sender.accessibilityIdentifier;
-    if (key) {
+    @try {
+        NSString *key = sender.accessibilityIdentifier;
+        if (!key) return;
         [[NSUserDefaults standardUserDefaults] setBool:sender.isOn forKey:key];
-        if (sharedMonitorView) dispatch_async(dispatch_get_main_queue(), ^{ [sharedMonitorView applySettings]; });
-    }
+
+        if ([key isEqualToString:@"perf_dark_mode"]) {
+            [UIView transitionWithView:self duration:0.25 options:UIViewAnimationOptionTransitionCrossDissolve animations:^{
+                [self refreshTheme];
+            } completion:nil];
+            return;
+        }
+
+        if (sharedMonitorView) {
+            dispatch_async(dispatch_get_main_queue(), ^{ [sharedMonitorView applySettings]; });
+        }
+    } @catch (NSException *e) {}
 }
 
 - (void)rowTapped:(UITapGestureRecognizer *)gesture {
     UIView *row = gesture.view;
-    for (UIView *sub in row.subviews) {
+    UIView *container = [row isKindOfClass:[UIVisualEffectView class]] ? ((UIVisualEffectView *)row).contentView : row;
+    for (UIView *sub in container.subviews) {
         if ([sub isKindOfClass:[UILabel class]] && sub.tag == 999) {
-            UILabel *v = (UILabel *)sub;
-            if (v.text) {
-                [UIPasteboard generalPasteboard].string = v.text;
-                @try {
-                    UIImpactFeedbackGenerator *gen = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleLight];
-                    [gen impactOccurred];
-                } @catch (NSException *e) {}
+            UILabel *val = (UILabel *)sub;
+            if (val.text) {
+                [UIPasteboard generalPasteboard].string = val.text;
+                UIImpactFeedbackGenerator *gen = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleLight];
+                [gen impactOccurred];
                 [self showToast:@"Copied to clipboard!"];
             }
             break;
@@ -1200,18 +1126,18 @@ static UIWindow *tutorialWindow = nil;
 }
 
 - (void)showToast:(NSString *)text {
-    UILabel *toast = [[UILabel alloc] initWithFrame:CGRectMake((self.bounds.size.width - 180) / 2.0, self.bounds.size.height - 100, 180, 36)];
+    UILabel *toast = [[UILabel alloc] initWithFrame:CGRectMake((self.bounds.size.width - 200) / 2.0, self.bounds.size.height - 200, 200, 38)];
     toast.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.85];
     toast.textColor = [UIColor whiteColor];
-    toast.font = [UIFont systemFontOfSize:13 weight:UIFontWeightBold];
+    toast.font = [UIFont systemFontOfSize:13 weight:UIFontWeightSemibold];
     toast.textAlignment = NSTextAlignmentCenter;
     toast.text = text;
-    toast.layer.cornerRadius = 18;
+    toast.layer.cornerRadius = 19;
     toast.layer.masksToBounds = YES;
     toast.alpha = 0.0;
     [self addSubview:toast];
     [UIView animateWithDuration:0.2 animations:^{ toast.alpha = 1.0; } completion:^(BOOL finished) {
-        [UIView animateWithDuration:0.3 delay:1.0 options:0 animations:^{ toast.alpha = 0.0; } completion:^(BOOL finished) {
+        [UIView animateWithDuration:0.3 delay:1.2 options:0 animations:^{ toast.alpha = 0.0; } completion:^(BOOL finished) {
             [toast removeFromSuperview];
         }];
     }];
@@ -1236,7 +1162,7 @@ static UIWindow *tutorialWindow = nil;
 
 @end
 
-// ===== MANAGER & STRESS TEST =====
+// ===== MANAGER =====
 @interface PerfMonitorManager : NSObject
 + (NSString *)getTestResultFilePath;
 + (void)runRamStressTest;
@@ -1319,12 +1245,13 @@ static UIWindow *tutorialWindow = nil;
 
 @end
 
-// ===== GESTURES & HANDLERS =====
+// ===== GESTURES =====
 @interface PerfMonitorGestureHandler : NSObject
 + (void)handleFourFingerTap:(UITapGestureRecognizer *)sender;
 + (void)handleFourFingerLongPress:(UILongPressGestureRecognizer *)sender;
 + (void)handleOrientationChange:(NSNotification *)notification;
 + (void)dismissTutorialAndExecute:(void(^)(void))action;
++ (void)showGreenGlassFlashForTouches:(NSArray<NSValue *> *)touchPoints completion:(void(^)(void))completion;
 + (void)openMenuNow;
 @end
 
@@ -1351,6 +1278,76 @@ static UIWindow *tutorialWindow = nil;
     }
 }
 
++ (void)showGreenGlassFlashForTouches:(NSArray<NSValue *> *)touchPoints completion:(void(^)(void))completion {
+    UIWindowScene *scene = nil;
+    for (UIWindowScene *s in [UIApplication sharedApplication].connectedScenes) {
+        if ([s isKindOfClass:[UIWindowScene class]]) { scene = s; break; }
+    }
+    if (!scene) { if (completion) completion(); return; }
+
+    if (flashWindow) { flashWindow.hidden = YES; flashWindow = nil; }
+    flashWindow = [[UIWindow alloc] initWithFrame:scene.coordinateSpace.bounds];
+    flashWindow.windowScene = scene;
+    flashWindow.windowLevel = UIWindowLevelAlert + 3500;
+    flashWindow.hidden = NO;
+    flashWindow.backgroundColor = [UIColor clearColor];
+    flashWindow.rootViewController = [[UIViewController alloc] init];
+    flashWindow.rootViewController.view.backgroundColor = [UIColor clearColor];
+
+    UIView *rootView = flashWindow.rootViewController.view;
+    CGRect bounds = flashWindow.bounds;
+
+    UIVisualEffectView *glass = [[UIVisualEffectView alloc] initWithEffect:PerfGlassEffect(YES)];
+    glass.frame = bounds;
+    glass.contentView.backgroundColor = [UIColor colorWithRed:0.0 green:0.78 blue:0.70 alpha:0.30];
+    glass.alpha = 0.0;
+    [rootView addSubview:glass];
+
+    NSMutableArray<UIView *> *rings = [NSMutableArray array];
+    for (NSValue *val in touchPoints) {
+        CGPoint p = [val CGPointValue];
+        UIView *ring = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 70, 70)];
+        ring.center = p;
+        ring.backgroundColor = [UIColor colorWithRed:0.0 green:0.9 blue:0.7 alpha:0.25];
+        ring.layer.cornerRadius = 35;
+        ring.layer.borderWidth = 3.0;
+        ring.layer.borderColor = [UIColor colorWithRed:0.0 green:1.0 blue:0.7 alpha:0.95].CGColor;
+        ring.layer.shadowColor = [UIColor colorWithRed:0.0 green:1.0 blue:0.7 alpha:1.0].CGColor;
+        ring.layer.shadowRadius = 18;
+        ring.layer.shadowOpacity = 0.8;
+        ring.layer.shadowOffset = CGSizeZero;
+        ring.alpha = 0.0;
+        ring.transform = CGAffineTransformMakeScale(0.2, 0.2);
+        [rootView addSubview:ring];
+        [rings addObject:ring];
+    }
+
+    UIImpactFeedbackGenerator *gen = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleHeavy];
+    [gen impactOccurred];
+
+    [UIView animateWithDuration:0.15 delay:0 options:UIViewAnimationOptionCurveEaseOut animations:^{
+        glass.alpha = 1.0;
+        for (UIView *r in rings) {
+            r.alpha = 1.0;
+            r.transform = CGAffineTransformMakeScale(1.0, 1.0);
+        }
+    } completion:^(BOOL finished) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            [UIView animateWithDuration:0.25 delay:0 options:UIViewAnimationOptionCurveEaseIn animations:^{
+                glass.alpha = 0.0;
+                for (UIView *r in rings) {
+                    r.alpha = 0.0;
+                    r.transform = CGAffineTransformMakeScale(2.2, 2.2);
+                }
+            } completion:^(BOOL finished) {
+                flashWindow.hidden = YES;
+                flashWindow = nil;
+                if (completion) completion();
+            }];
+        });
+    }];
+}
+
 + (void)openMenuNow {
     if (fullScreenMenuWindow) return;
     UIWindowScene *targetScene = nil;
@@ -1358,7 +1355,6 @@ static UIWindow *tutorialWindow = nil;
         if ([scene isKindOfClass:[UIWindowScene class]]) { targetScene = scene; break; }
     }
     if (!targetScene) return;
-
     fullScreenMenuWindow = [[UIWindow alloc] initWithFrame:targetScene.coordinateSpace.bounds];
     fullScreenMenuWindow.windowScene = targetScene;
     fullScreenMenuWindow.windowLevel = UIWindowLevelAlert + 2000;
@@ -1394,18 +1390,36 @@ static UIWindow *tutorialWindow = nil;
     if (sender.state != UIGestureRecognizerStateBegan) return;
     if (fullScreenMenuWindow) return;
 
-    @try {
-        UIImpactFeedbackGenerator *gen = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleHeavy];
-        [gen impactOccurred];
-    } @catch (NSException *e) {}
+    NSMutableArray<NSValue *> *points = [NSMutableArray array];
+    NSUInteger touchCount = sender.numberOfTouches;
+    UIView *view = sender.view;
+    for (NSUInteger i = 0; i < touchCount; i++) {
+        CGPoint p = [sender locationOfTouch:i inView:view];
+        [points addObject:[NSValue valueWithCGPoint:p]];
+    }
+    if (points.count == 0) {
+        CGPoint center = CGPointMake([UIScreen mainScreen].bounds.size.width / 2.0,
+                                     [UIScreen mainScreen].bounds.size.height / 2.0);
+        [points addObject:[NSValue valueWithCGPoint:center]];
+    }
 
-    [self dismissTutorialAndExecute:^{
+    if (tutorialWindow) {
+        [PerfMonitorManager setTutorialCompleted];
+        [UIView animateWithDuration:0.3 animations:^{
+            tutorialWindow.alpha = 0.0;
+        } completion:^(BOOL finished) {
+            tutorialWindow.hidden = YES;
+            tutorialWindow = nil;
+        }];
+    }
+
+    [self showGreenGlassFlashForTouches:points completion:^{
         [self openMenuNow];
     }];
 }
 
 + (void)handleOrientationChange:(NSNotification *)notification {
-    if (fullScreenMenuWindow || tutorialWindow) return;
+    if (fullScreenMenuWindow || tutorialWindow || flashWindow) return;
     if (sharedMonitorWindow && !sharedMonitorWindow.isHidden) {
         CGSize screenSize = [UIScreen mainScreen].bounds.size;
         sharedMonitorWindow.center = CGPointMake(screenSize.width / 2.0, 90.0);
@@ -1414,7 +1428,7 @@ static UIWindow *tutorialWindow = nil;
 
 @end
 
-// ===== TWEAK ENTRY POINT =====
+// ===== ENTRY =====
 __attribute__((constructor)) static void tweakEntry() {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         UIWindow *targetWindow = nil;
