@@ -1,5 +1,6 @@
 export interface TelemetryData {
   cpuUsage: number; // percentage, e.g. 14.8
+  gpuUsage: number; // percentage, e.g. 28.5
   ramMB: number; // megabytes, e.g. 52.4
   thermalState: 'Normal' | 'Warm' | 'Hot' | 'Critical!';
   fps: number; // frames per second, e.g. 60
@@ -31,6 +32,7 @@ export interface PipSettings {
   bgColor: string; // hex color
   accentColor: string; // hex color
   showCpu: boolean;
+  showGpu: boolean;
   showRam: boolean;
   showThermal: boolean;
   showFps: boolean;

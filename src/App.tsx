@@ -33,6 +33,7 @@ export default function App() {
   // Device telemetry state
   const [telemetry, setTelemetry] = useState<TelemetryData>(() => ({
     cpuUsage: 12.4,
+    gpuUsage: 24.5,
     ramMB: 48.6,
     thermalState: 'Normal',
     fps: 60,
@@ -70,6 +71,7 @@ export default function App() {
       bgColor: '#000000',
       accentColor: '#38bdf8',
       showCpu: true,
+      showGpu: true,
       showRam: true,
       showThermal: true,
       showFps: false,
@@ -161,6 +163,11 @@ export default function App() {
         const jitter = (Math.random() - 0.5) * 4;
         const newCpu = Math.max(2.1, Math.min(99.4, baseCpu + jitter));
 
+        // Simulated GPU activity based on particles & rendering
+        const baseGpu = 12 * cpuLoadFactor + (stressTest.status === 'running' ? 18 : 0);
+        const gpuJitter = (Math.random() - 0.5) * 5;
+        const newGpu = Math.max(1.5, Math.min(98.5, baseGpu + gpuJitter));
+
         // Base RAM ~48MB + allocated stress test RAM + minor fluctuations
         const baseRam = 48.2 + (stressTest.allocatedMB || 0);
         const ramJitter = (Math.random() - 0.5) * 1.5;
@@ -171,6 +178,7 @@ export default function App() {
         return {
           ...prev,
           cpuUsage: newCpu,
+          gpuUsage: newGpu,
           ramMB: newRam,
           thermalState: newThermal,
           fps: currentFps,

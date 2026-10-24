@@ -45,6 +45,7 @@ export const FloatingPiP: React.FC<FloatingPiPProps> = ({
   // Calculate dynamic dimensions based on enabled items
   const activeMetricsCount = [
     settings.showCpu,
+    settings.showGpu,
     settings.showRam,
     settings.showThermal,
     settings.showFps,
@@ -166,6 +167,14 @@ export const FloatingPiP: React.FC<FloatingPiPProps> = ({
             <span className="text-white/70">CPU:</span>
             <span style={{ color: settings.accentColor }} className="font-bold">
               {formatDec(telemetry.cpuUsage)}%
+            </span>
+          </div>
+        )}
+        {settings.showGpu && (
+          <div className="flex items-center gap-1.5">
+            <span className="text-white/70">GPU:</span>
+            <span className="font-bold text-amber-300">
+              {formatDec(telemetry.gpuUsage)}%
             </span>
           </div>
         )}
