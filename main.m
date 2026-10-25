@@ -626,7 +626,7 @@ static UIWindow *flashWindow = nil;
     shareButton.layer.cornerRadius = 25;
     shareButton.layer.borderWidth = 0.8;
     shareButton.layer.borderColor = [[UIColor whiteColor] colorWithAlphaComponent:0.4].CGColor;
-    [shareButton setTitle:@"square.and.arrow.up" forState:UIControlStateNormal];
+    [shareButton setTitle:@"⬆" forState:UIControlStateNormal];
     [shareButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     shareButton.titleLabel.font = [UIFont systemFontOfSize:22 weight:UIFontWeightBold];
     [shareButton addTarget:self action:@selector(shareTapped) forControlEvents:UIControlEventTouchUpInside];
@@ -679,7 +679,6 @@ static UIWindow *flashWindow = nil;
     unsigned long long totalDeviceRam = [[NSProcessInfo processInfo] physicalMemory] / (1024 * 1024);
     NSString *bundleId = [[NSBundle mainBundle] bundleIdentifier] ?: @"Unknown";
     NSString *iosVersion = [[UIDevice currentDevice] systemVersion];
-    NSString *storageFree = [NSString stringWithFormat:@"%.1f MB", [[[NSFileManager defaultManager] attributesOfFileSystemForPath:NSHomeDirectory() error:nil][NSFileSystemFreeSize] unsignedLongLongValue] / (1024.0 * 1024.0)];
 
     BOOL jitEnabled = debuggerAttached;
     typedef int (*csops_t)(pid_t, unsigned int, void*, size_t);
@@ -695,11 +694,11 @@ static UIWindow *flashWindow = nil;
     NSString *gpuStr = (gpuVal >= 0) ? [NSString stringWithFormat:@"%.0f%%", gpuVal] : @"N/A";
 
     self.shareSummaryText = [NSString stringWithFormat:
-        @"📊 PerfMonitor Diagnostics\n------------------------\nDevice Model: %@\niOS Version: %@\nBundle ID: %@\nDebugger Attached: %@\nJIT: %@\nMemory+ Kernel: Active\nApp RAM Usage: %.1f MB\nTotal Device RAM: %llu MB\nFree Storage: %@\nGPU: %@",
+        @"📊 PerfMonitor Diagnostics\n------------------------\nDevice Model: %@\niOS Version: %@\nBundle ID: %@\nDebugger Attached: %@\nJIT: %@\nMemory+ Kernel: Active\nApp RAM Usage: %.1f MB\nTotal Device RAM: %llu MB\nGPU: %@",
         deviceModel, iosVersion, bundleId,
         debuggerAttached ? @"Yes" : @"No",
         jitEnabled ? @"Enabled" : @"Disabled",
-        appRamMB, totalDeviceRam, storageFree, gpuStr];
+        appRamMB, totalDeviceRam, gpuStr];
 
     _diagScrollView = [[UIScrollView alloc] initWithFrame:CGRectMake(L, contentY, contentW, contentH)];
     _diagScrollView.showsVerticalScrollIndicator = NO;
@@ -712,8 +711,8 @@ static UIWindow *flashWindow = nil;
         @{@"title": @"Memory+ Kernel",   @"value": @"Active"},
         @{@"title": @"App RAM Usage",    @"value": [NSString stringWithFormat:@"%.1f MB", appRamMB]},
         @{@"title": @"Total Device RAM", @"value": [NSString stringWithFormat:@"%llu MB", totalDeviceRam]},
-        @{@"title": @"Storage Free",     @"value": [NSString stringWithFormat:@"%.1f MB", storageFree]},
         @{@"title": @"JIT",              @"value": jitEnabled ? @"Enabled" : @"Disabled"},
+        @{@"title": @"GPU Usage",        @"value": gpuStr}
     ];
 
     CGFloat rowH = 49, rowGap = 9, yOff = 0;
