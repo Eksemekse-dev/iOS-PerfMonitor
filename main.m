@@ -699,7 +699,7 @@ static UIWindow *flashWindow = nil;
         deviceModel, iosVersion, bundleId,
         debuggerAttached ? @"Yes" : @"No",
         jitEnabled ? @"Enabled" : @"Disabled",
-        appRamMB, totalDeviceRam, freeStorageStr, gpuStr];
+        appRamMB, totalDeviceRam, storageFree, gpuStr];
 
     _diagScrollView = [[UIScrollView alloc] initWithFrame:CGRectMake(L, contentY, contentW, contentH)];
     _diagScrollView.showsVerticalScrollIndicator = NO;
